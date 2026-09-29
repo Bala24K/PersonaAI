@@ -1,84 +1,1356 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Persona AI — Test Chat</title>
-<style>
-  :root { color-scheme: light dark; }
-  body { font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }
-  #log { border: 1px solid #8884; border-radius: 8px; padding: 12px; height: 420px; overflow-y: auto; margin-bottom: 12px; }
-  .msg { margin-bottom: 10px; line-height: 1.4; }
-  .msg .role { font-weight: 600; margin-right: 6px; }
-  .msg.user .role { color: #4a7; }
-  .msg.assistant .role { color: #57a; }
-  .debug { font-size: 12px; opacity: 0.6; margin-top: 2px; white-space: pre-wrap; }
-  form { display: flex; gap: 8px; }
-  input[type=text] { flex: 1; padding: 8px; border-radius: 6px; border: 1px solid #8888; }
-  button { padding: 8px 16px; border-radius: 6px; border: none; background: #57a; color: white; cursor: pointer; }
-  .config { font-size: 12px; margin-bottom: 8px; opacity: 0.7; }
-  label { margin-right: 12px; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Persona AI — Adaptive Emotional Companion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@300;400;500;600;700&family=Lora:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-main: #0c0f17;
+      --bg-panel: #131722;
+      --bg-card: #181d2b;
+      --bg-card-hover: #1f2536;
+      --bg-bubble-user: #1e293b;
+      --bg-bubble-ai: #141924;
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-focus: rgba(245, 158, 11, 0.4);
+      --accent-amber: #f59e0b;
+      --accent-amber-light: #fbbf24;
+      --accent-amber-glow: rgba(245, 158, 11, 0.18);
+      --accent-teal: #14b8a6;
+      --accent-teal-light: #2dd4bf;
+      --accent-teal-glow: rgba(20, 184, 166, 0.18);
+      --text-primary: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --danger: #ef4444;
+      --success: #10b981;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --shadow-panel: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-main);
+      color: var(--text-primary);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
+
+    /* Top App Header */
+    header.app-header {
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      z-index: 10;
+    }
+
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .brand-logo {
+      font-family: 'Cinzel', serif;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .brand-logo span.dot {
+      width: 8px;
+      height: 8px;
+      background: var(--accent-amber);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--accent-amber);
+      display: inline-block;
+    }
+
+    .brand-subtitle {
+      font-size: 13px;
+      color: var(--text-secondary);
+      border-left: 1px solid var(--border-subtle);
+      padding-left: 14px;
+      font-weight: 400;
+    }
+    .brand-subtitle strong {
+      color: var(--accent-teal-light);
+      font-weight: 600;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .user-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .user-badge .indicator {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent-teal);
+      box-shadow: 0 0 6px var(--accent-teal);
+    }
+
+    .btn-header {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      padding: 6px 14px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+    .btn-header:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--accent-amber);
+      color: var(--accent-amber-light);
+    }
+
+    /* Main Two-Panel Layout */
+    .app-body {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Left Panel: Chat Area (~60%) */
+    .chat-panel {
+      flex: 6;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border-subtle);
+      background: var(--bg-main);
+      position: relative;
+      min-width: 0;
+    }
+
+    .chat-header-bar {
+      padding: 12px 20px;
+      background: rgba(19, 23, 34, 0.7);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+    }
+    .companion-status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .avatar-circle {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #d97706, #0d9488);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: #fff;
+      font-size: 14px;
+      box-shadow: 0 0 12px rgba(245, 158, 11, 0.3);
+    }
+    .companion-meta h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      font-family: 'Lora', serif;
+    }
+    .companion-meta p {
+      font-size: 11px;
+      color: var(--accent-teal);
+    }
+
+    .toggle-debug-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      user-select: none;
+    }
+    .toggle-debug-label:hover {
+      color: var(--text-secondary);
+    }
+
+    /* Chat Messages Stream */
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      scroll-behavior: smooth;
+    }
+
+    .msg-group {
+      display: flex;
+      flex-direction: column;
+      max-width: 82%;
+      animation: fadeIn 0.25s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .msg-group.user {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+    .msg-group.assistant {
+      align-self: flex-start;
+      align-items: flex-start;
+    }
+
+    .msg-sender-tag {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 5px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .msg-group.user .msg-sender-tag {
+      color: var(--accent-amber-light);
+    }
+    .msg-group.assistant .msg-sender-tag {
+      color: var(--accent-teal-light);
+    }
+
+    .msg-bubble {
+      padding: 14px 18px;
+      border-radius: var(--radius-lg);
+      line-height: 1.6;
+      font-size: 14.5px;
+      position: relative;
+      word-break: break-word;
+    }
+
+    .msg-group.user .msg-bubble {
+      background: var(--bg-bubble-user);
+      color: #f8fafc;
+      border-bottom-right-radius: var(--radius-sm);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+
+    .msg-group.assistant .msg-bubble {
+      background: var(--bg-bubble-ai);
+      color: #f1f5f9;
+      border-bottom-left-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      font-family: 'Inter', sans-serif;
+    }
+
+    .msg-debug-details {
+      margin-top: 8px;
+      background: #090c12;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      color: #94a3b8;
+      width: 100%;
+    }
+    .debug-badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .d-pill {
+      background: rgba(255, 255, 255, 0.06);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10.5px;
+      color: #cbd5e1;
+    }
+    .d-pill.score { color: var(--accent-teal-light); }
+    .d-pill.time { color: var(--accent-amber-light); }
+
+    /* Typing indicator */
+    .typing-indicator-container {
+      display: none;
+      align-self: flex-start;
+      margin-left: 24px;
+      margin-bottom: 12px;
+    }
+    .typing-indicator {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      padding: 10px 16px;
+      border-radius: 20px;
+    }
+    .typing-indicator span {
+      width: 6px;
+      height: 6px;
+      background: var(--accent-teal);
+      border-radius: 50%;
+      animation: bounce 1.2s infinite ease-in-out;
+    }
+    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+    .typing-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-left: 6px;
+    }
+    @keyframes bounce {
+      0%, 80%, 100% { transform: scale(0); opacity: 0.3; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+
+    /* Chat Input Form */
+    .chat-input-area {
+      padding: 16px 24px;
+      background: var(--bg-panel);
+      border-top: 1px solid var(--border-subtle);
+    }
+    .input-box-wrapper {
+      display: flex;
+      gap: 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 8px 12px;
+      transition: border-color 0.2s;
+    }
+    .input-box-wrapper:focus-within {
+      border-color: var(--accent-amber);
+      box-shadow: 0 0 0 2px var(--accent-amber-glow);
+    }
+    textarea.chat-textarea {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #fff;
+      font-family: inherit;
+      font-size: 14.5px;
+      line-height: 1.5;
+      resize: none;
+      height: 48px;
+      max-height: 140px;
+      padding: 4px 0;
+    }
+    textarea.chat-textarea::placeholder {
+      color: var(--text-muted);
+    }
+    .btn-send {
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-sm);
+      padding: 0 18px;
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      align-self: flex-end;
+      height: 40px;
+    }
+    .btn-send:hover:not(:disabled) {
+      background: linear-gradient(135deg, #fbbf24, #f59e0b);
+      box-shadow: 0 0 12px var(--accent-amber-glow);
+      transform: translateY(-1px);
+    }
+    .btn-send:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .input-hint {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* Right Panel: Persona Mind Dashboard (~40%) */
+    .mind-panel {
+      flex: 4;
+      background: var(--bg-panel);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      border-left: 1px solid var(--border-subtle);
+      min-width: 320px;
+    }
+
+    .mind-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .mind-header h2 {
+      font-family: 'Cinzel', serif;
+      font-size: 15px;
+      letter-spacing: 0.8px;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .mind-header .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-teal);
+      animation: pulseTeal 2s infinite;
+    }
+    @keyframes pulseTeal {
+      0% { box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.7); }
+      70% { box-shadow: 0 0 0 8px rgba(20, 184, 166, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(20, 184, 166, 0); }
+    }
+
+    .dashboard-content {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Dashboard Card */
+    .dash-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    }
+    .dash-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      padding-bottom: 8px;
+    }
+    .dash-card-header h4 {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--accent-amber-light);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .dash-card-header .badge-tag {
+      font-size: 10px;
+      background: rgba(255, 255, 255, 0.06);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--text-muted);
+    }
+
+    /* Section A: Current Read */
+    .read-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .read-item {
+      background: rgba(0, 0, 0, 0.25);
+      padding: 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .read-item.full {
+      grid-column: span 2;
+    }
+    .read-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .read-value {
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .read-value.highlight {
+      color: var(--accent-teal-light);
+    }
+    .emotion-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--accent-amber-light);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      font-size: 12px;
+    }
+
+    /* Section B: Communication Style & Traits */
+    .trait-row {
+      margin-bottom: 12px;
+    }
+    .trait-info {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .trait-name {
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+    .trait-pct {
+      color: #fff;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+    }
+    .progress-bar-bg {
+      height: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: linear-gradient(90deg, #0d9488, #2dd4bf);
+      transition: width 0.5s ease-out;
+    }
+    .progress-bar-fill.warm {
+      background: linear-gradient(90deg, #d97706, #fbbf24);
+    }
+    .meta-observation {
+      font-size: 10.5px;
+      color: var(--text-muted);
+      margin-top: 8px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* Section C: Style Match */
+    .style-similarity-box {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: rgba(0, 0, 0, 0.2);
+      padding: 12px;
+      border-radius: var(--radius-sm);
+      margin-bottom: 12px;
+    }
+    .sim-gauge {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--accent-teal-light);
+      font-family: 'Cinzel', serif;
+    }
+    .sim-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .gap-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11.5px;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .gap-feature { color: var(--text-secondary); }
+    .gap-val { color: #fff; font-family: 'JetBrains Mono', monospace; }
+
+    /* Section D: Memories */
+    .memories-list {
+      max-height: 220px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .memory-item {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: var(--radius-sm);
+      padding: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      transition: border-color 0.2s;
+    }
+    .memory-item:hover {
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+    .memory-body {
+      flex: 1;
+    }
+    .memory-tag {
+      display: inline-block;
+      font-size: 9px;
+      text-transform: uppercase;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 3px;
+      margin-bottom: 4px;
+      background: rgba(20, 184, 166, 0.15);
+      color: var(--accent-teal-light);
+    }
+    .memory-tag.preference { background: rgba(245, 158, 11, 0.15); color: var(--accent-amber-light); }
+    .memory-tag.relational { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
+    .memory-text {
+      font-size: 12px;
+      color: #e2e8f0;
+      line-height: 1.4;
+    }
+    .btn-delete-memory {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 2px 4px;
+      border-radius: 4px;
+      transition: color 0.2s;
+    }
+    .btn-delete-memory:hover {
+      color: var(--danger);
+      background: rgba(239, 68, 68, 0.1);
+    }
+    .empty-state {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 16px 0;
+    }
+
+    /* Section E: Teach It (Profile Ingestion) */
+    .import-area {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    textarea.import-input {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      color: #fff;
+      font-size: 12px;
+      padding: 8px;
+      height: 60px;
+      resize: vertical;
+      font-family: inherit;
+    }
+    textarea.import-input:focus {
+      outline: none;
+      border-color: var(--accent-teal);
+    }
+    .btn-import {
+      align-self: flex-end;
+      background: var(--bg-card-hover);
+      border: 1px solid var(--accent-teal);
+      color: var(--accent-teal-light);
+      padding: 6px 14px;
+      font-size: 11.5px;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-import:hover:not(:disabled) {
+      background: var(--accent-teal);
+      color: #0c0f17;
+    }
+    .import-status-msg {
+      font-size: 11px;
+      color: var(--accent-teal-light);
+      min-height: 16px;
+    }
+
+    /* Mobile Drawer / Responsive */
+    @media (max-width: 900px) {
+      .app-body { flex-direction: column; }
+      .chat-panel { flex: 1; border-right: none; height: 60vh; }
+      .mind-panel { height: 40vh; border-left: none; border-top: 1px solid var(--border-subtle); }
+    }
+  </style>
 </head>
 <body>
-<h2>Persona AI — Test Chat</h2>
-<div class="config">
-  API base: <input id="apiBase" type="text" value="http://localhost:8000" size="28">
-  <label><input type="checkbox" id="showDebug"> show EQ/eval debug</label>
-</div>
-<div id="log"></div>
-<form id="form">
-  <input id="input" type="text" placeholder="Say something..." autocomplete="off">
-  <button type="submit">Send</button>
-</form>
 
-<script>
-const userId = "web_user_" + Math.random().toString(36).slice(2, 8);
-const sessionId = "web_session_" + Math.random().toString(36).slice(2, 8);
-const log = document.getElementById("log");
-const form = document.getElementById("form");
-const input = document.getElementById("input");
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="brand-logo">Persona<span class="dot"></span></div>
+      <div class="brand-subtitle">
+        <strong id="headerCharName">Nova</strong> — Adaptive companion with emotional intelligence & live state modeling
+      </div>
+    </div>
+    <div class="header-controls">
+      <div class="user-badge">
+        <span class="indicator"></span>
+        <span id="userIdLabel">user_init</span>
+      </div>
+      <button class="btn-header" id="btnNewProfile" title="Reset identity and start a fresh profile">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+        New Profile
+      </button>
+    </div>
+  </header>
 
-function addMsg(role, text, debug) {
-  const div = document.createElement("div");
-  div.className = "msg " + role;
-  div.innerHTML = `<span class="role">${role === "user" ? "You" : "Persona"}:</span>${escapeHtml(text)}`;
-  if (debug) {
-    const d = document.createElement("div");
-    d.className = "debug";
-    d.textContent = JSON.stringify(debug, null, 2);
-    div.appendChild(d);
-  }
-  log.appendChild(div);
-  log.scrollTop = log.scrollHeight;
-}
+  <!-- Main Application Body -->
+  <div class="app-body">
+    
+    <!-- Left: Conversation / Chat Area -->
+    <main class="chat-panel">
+      
+      <div class="chat-header-bar">
+        <div class="companion-status">
+          <div class="avatar-circle" id="charAvatar">N</div>
+          <div class="companion-meta">
+            <h3 id="charTitle">Nova</h3>
+            <p id="charStatus">Online · Connected to Fast Inference</p>
+          </div>
+        </div>
+        <label class="toggle-debug-label">
+          <input type="checkbox" id="chkShowDebug"> Show EQ / Eval Debug
+        </label>
+      </div>
 
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-}
+      <!-- Messages Stream -->
+      <div class="chat-messages" id="chatStream">
+        <!-- Initial Persona Welcome Bubble -->
+        <div class="msg-group assistant">
+          <div class="msg-sender-tag">Nova</div>
+          <div class="msg-bubble">
+            Hello! I'm Nova. I listen carefully, notice how you're feeling, and adapt to how you prefer to communicate over time. What's on your mind today?
+          </div>
+        </div>
+      </div>
 
-form.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const message = input.value.trim();
-  if (!message) return;
-  addMsg("user", message);
-  input.value = "";
+      <!-- Typing Indicator -->
+      <div class="typing-indicator-container" id="typingIndicator">
+        <div class="typing-indicator">
+          <span></span><span></span><span></span>
+          <span class="typing-label" id="typingLabel">Nova is thinking...</span>
+        </div>
+      </div>
 
-  const apiBase = document.getElementById("apiBase").value.replace(/\/$/, "");
-  const showDebug = document.getElementById("showDebug").checked;
+      <!-- Input Area -->
+      <div class="chat-input-area">
+        <form id="chatForm">
+          <div class="input-box-wrapper">
+            <textarea 
+              id="messageInput" 
+              class="chat-textarea" 
+              placeholder="Type your message... (Enter to send, Shift+Enter for new line)"
+              rows="1"
+            ></textarea>
+            <button type="submit" id="btnSend" class="btn-send">
+              <span>Send</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+            </button>
+          </div>
+          <div class="input-hint">
+            <span>Press <strong>Enter</strong> to send &bull; <strong>Shift+Enter</strong> for newline</span>
+            <span id="apiStatusBadge">API Connected</span>
+          </div>
+        </form>
+      </div>
 
-  try {
-    const res = await fetch(apiBase + "/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, session_id: sessionId, message, show_debug: showDebug })
+    </main>
+
+    <!-- Right: Persona Mind / State Dashboard -->
+    <aside class="mind-panel">
+      
+      <div class="mind-header">
+        <h2><span class="pulse-dot"></span> Persona Mind Dashboard</h2>
+        <button class="btn-header" id="btnRefreshDashboard" style="padding: 4px 8px;" title="Refresh State">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/></svg>
+        </button>
+      </div>
+
+      <div class="dashboard-content">
+
+        <!-- Card A: Current Read -->
+        <div class="dash-card">
+          <div class="dash-card-header">
+            <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg> Current Read</h4>
+            <span class="badge-tag" id="readConfidence">Confidence: Low</span>
+          </div>
+          <div class="read-grid">
+            <div class="read-item">
+              <div class="read-label">Dominant Emotion</div>
+              <div class="read-value" id="dominantEmotion">
+                <span class="emotion-pill">Neutral / Curious</span>
+              </div>
+            </div>
+            <div class="read-item">
+              <div class="read-label">Situation / Intent</div>
+              <div class="read-value highlight" id="situationRead">Opening Turn</div>
+            </div>
+            <div class="read-item full">
+              <div class="read-label">Interaction Strategy</div>
+              <div class="read-value" id="strategyRead" style="font-size: 12px; font-weight: 500;">Validate curiosity & establish baseline rapport</div>
+            </div>
+            <div class="read-item full" style="font-size: 11px; color: var(--text-muted);">
+              <div class="read-label">Computational Telemetry</div>
+              <div id="modelTelemetry">LLM: Active · C++ Analyzer: Initialized</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card B: Communication Style & Trait Meters -->
+        <div class="dash-card">
+          <div class="dash-card-header">
+            <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Communication Style</h4>
+            <span class="badge-tag" id="turnsObserved">0 turns</span>
+          </div>
+          
+          <div id="traitsContainer">
+            <div class="trait-row">
+              <div class="trait-info">
+                <span class="trait-name">Warmth & Affection</span>
+                <span class="trait-pct" id="valWarmth">10%</span>
+              </div>
+              <div class="progress-bar-bg"><div class="progress-bar-fill warm" id="barWarmth" style="width: 10%;"></div></div>
+            </div>
+            <div class="trait-row">
+              <div class="trait-info">
+                <span class="trait-name">Trust</span>
+                <span class="trait-pct" id="valTrust">30%</span>
+              </div>
+              <div class="progress-bar-bg"><div class="progress-bar-fill" id="barTrust" style="width: 30%;"></div></div>
+            </div>
+            <div class="trait-row">
+              <div class="trait-info">
+                <span class="trait-name">Familiarity</span>
+                <span class="trait-pct" id="valFamiliarity">5%</span>
+              </div>
+              <div class="progress-bar-bg"><div class="progress-bar-fill" id="barFamiliarity" style="width: 5%;"></div></div>
+            </div>
+            <div class="trait-row">
+              <div class="trait-info">
+                <span class="trait-name">Playfulness</span>
+                <span class="trait-pct" id="valPlayfulness">30%</span>
+              </div>
+              <div class="progress-bar-bg"><div class="progress-bar-fill" id="barPlayfulness" style="width: 30%;"></div></div>
+            </div>
+            <div class="trait-row">
+              <div class="trait-info">
+                <span class="trait-name">Recent Tension</span>
+                <span class="trait-pct" id="valTension">0%</span>
+              </div>
+              <div class="progress-bar-bg"><div class="progress-bar-fill" id="barTension" style="width: 0%; background: #ef4444;"></div></div>
+            </div>
+          </div>
+
+          <div class="meta-observation">
+            <span>Model confidence: <strong id="confidencePct">10%</strong></span>
+            <span id="sharedHistorySummary">No history yet</span>
+          </div>
+        </div>
+
+        <!-- Card C: Style Match -->
+        <div class="dash-card">
+          <div class="dash-card-header">
+            <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> Style Match</h4>
+            <span class="badge-tag">Alignment</span>
+          </div>
+          
+          <div class="style-similarity-box">
+            <div class="sim-gauge" id="simPct">94%</div>
+            <div class="sim-desc">
+              <strong>Conversational Harmony</strong><br>
+              <span style="font-size: 11px; color: var(--text-muted);" id="simSubtext">Lexical tone & message cadence aligned.</span>
+            </div>
+          </div>
+
+          <div id="styleGapsList">
+            <div class="gap-item">
+              <span class="gap-feature">Average Length</span>
+              <span class="gap-val" id="gapLength">User ~12w / Nova ~18w</span>
+            </div>
+            <div class="gap-item">
+              <span class="gap-feature">Inquiry Frequency</span>
+              <span class="gap-val" id="gapQuestions">Balanced</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card D: Long-Term Memories -->
+        <div class="dash-card">
+          <div class="dash-card-header">
+            <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> Memories</h4>
+            <span class="badge-tag" id="memoryCountBadge">0 records</span>
+          </div>
+          <div class="memories-list" id="memoriesList">
+            <div class="empty-state">No long-term memories formed yet. Chat or use profile ingestion below.</div>
+          </div>
+        </div>
+
+        <!-- Card E: Teach It About Yourself -->
+        <div class="dash-card">
+          <div class="dash-card-header">
+            <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Teach It About Yourself</h4>
+            <span class="badge-tag">Ingest Bio</span>
+          </div>
+          <div class="import-area">
+            <textarea 
+              id="profileImportText" 
+              class="import-input" 
+              placeholder="Paste bio, preferences, or important facts (e.g. 'I work in distributed systems and love jazz')..."
+            ></textarea>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span class="import-status-msg" id="importStatusMsg"></span>
+              <button id="btnImportProfile" class="btn-import">Ingest Profile</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </aside>
+
+  </div>
+
+  <!-- Client Script -->
+  <script>
+    // State management & persistent user session
+    let userId = localStorage.getItem("persona_user_id");
+    let sessionId = localStorage.getItem("persona_session_id");
+
+    if (!userId) {
+      userId = "user_" + Math.random().toString(36).substring(2, 9);
+      localStorage.setItem("persona_user_id", userId);
+    }
+    if (!sessionId) {
+      sessionId = "session_" + Math.random().toString(36).substring(2, 9);
+      localStorage.setItem("persona_session_id", sessionId);
+    }
+
+    const apiBase = window.location.origin;
+
+    // DOM Elements
+    const chatStream = document.getElementById("chatStream");
+    const chatForm = document.getElementById("chatForm");
+    const messageInput = document.getElementById("messageInput");
+    const btnSend = document.getElementById("btnSend");
+    const typingIndicator = document.getElementById("typingIndicator");
+    const typingLabel = document.getElementById("typingLabel");
+    const userIdLabel = document.getElementById("userIdLabel");
+    const btnNewProfile = document.getElementById("btnNewProfile");
+    const btnRefreshDashboard = document.getElementById("btnRefreshDashboard");
+    const chkShowDebug = document.getElementById("chkShowDebug");
+    const profileImportText = document.getElementById("profileImportText");
+    const btnImportProfile = document.getElementById("btnImportProfile");
+    const importStatusMsg = document.getElementById("importStatusMsg");
+
+    userIdLabel.textContent = userId;
+
+    // Utility: Safe HTML Escape
+    function escapeHtml(s) {
+      if (typeof s !== "string") return "";
+      return s.replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    // Auto-scroll chat to bottom
+    function scrollToBottom() {
+      chatStream.scrollTop = chatStream.scrollHeight;
+    }
+
+    // Append Message to Chat
+    function appendMessage(role, text, debugData = null, characterName = "Nova") {
+      const group = document.createElement("div");
+      group.className = `msg-group ${role}`;
+
+      const senderTag = document.createElement("div");
+      senderTag.className = "msg-sender-tag";
+      senderTag.textContent = role === "user" ? "You" : characterName;
+      group.appendChild(senderTag);
+
+      const bubble = document.createElement("div");
+      bubble.className = "msg-bubble";
+      bubble.innerHTML = escapeHtml(text).replace(/\n/g, "<br>");
+      group.appendChild(bubble);
+
+      // Expandable Debug Information
+      if (debugData && (chkShowDebug.checked || debugData.show_always)) {
+        const debugBox = document.createElement("div");
+        debugBox.className = "msg-debug-details";
+
+        const badgeRow = document.createElement("div");
+        badgeRow.className = "debug-badge-row";
+
+        if (debugData.eval_result) {
+          const ev = debugData.eval_result;
+          badgeRow.innerHTML += `<span class="d-pill score">Eval Score: ${Math.round((ev.overall || 0)*100)}%</span>`;
+          badgeRow.innerHTML += `<span class="d-pill">Persona: ${Math.round((ev.persona_consistency || 0)*100)}%</span>`;
+          badgeRow.innerHTML += `<span class="d-pill">Emotional Fit: ${Math.round((ev.emotional_fit || 0)*100)}%</span>`;
+        }
+        if (debugData.cpp_text_stats) {
+          const cpp = debugData.cpp_text_stats;
+          badgeRow.innerHTML += `<span class="d-pill time">C++ Ease: ${cpp.flesch_reading_ease || 'N/A'}</span>`;
+          badgeRow.innerHTML += `<span class="d-pill">Src: ${cpp.source || 'cpp17'}</span>`;
+        }
+        debugBox.appendChild(badgeRow);
+
+        const rawCode = document.createElement("pre");
+        rawCode.style.margin = "0";
+        rawCode.style.fontSize = "10.5px";
+        rawCode.style.whiteSpace = "pre-wrap";
+        rawCode.textContent = JSON.stringify(debugData, null, 2);
+        debugBox.appendChild(rawCode);
+
+        group.appendChild(debugBox);
+      }
+
+      chatStream.appendChild(group);
+      scrollToBottom();
+    }
+
+    // Refresh Dashboard Data from API
+    async function refreshDashboard() {
+      try {
+        // 1. Fetch User State & Model
+        const stateRes = await fetch(`${apiBase}/user/${userId}/state`);
+        if (stateRes.ok) {
+          const stateData = await stateRes.json();
+          renderUserState(stateData);
+        }
+
+        // 2. Fetch Style Alignment
+        const styleRes = await fetch(`${apiBase}/user/${userId}/style`);
+        if (styleRes.ok) {
+          const styleData = await styleRes.json();
+          renderStyleMatch(styleData);
+        }
+
+        // 3. Fetch Memories
+        const memRes = await fetch(`${apiBase}/user/${userId}/memories`);
+        if (memRes.ok) {
+          const memData = await memRes.json();
+          renderMemories(memData.memories || []);
+        }
+
+        // 4. Fetch Character Info
+        const charRes = await fetch(`${apiBase}/character`);
+        if (charRes.ok) {
+          const charData = await charRes.json();
+          document.getElementById("headerCharName").textContent = charData.name || "Nova";
+          document.getElementById("charTitle").textContent = charData.name || "Nova";
+          document.getElementById("charAvatar").textContent = (charData.name || "N")[0].toUpperCase();
+          document.getElementById("modelTelemetry").textContent = `LLM: ${charData.llm_provider || 'Active'} · C++17 Analyzer: Live`;
+        }
+      } catch (err) {
+        console.warn("Dashboard sync error:", err);
+      }
+    }
+
+    // Render User State
+    function renderUserState(data) {
+      const rel = data.relationship || {};
+      const turnCount = data.turn_count || 0;
+      const latestEq = data.latest_eq || {};
+
+      document.getElementById("turnsObserved").textContent = `${turnCount} turns`;
+
+      // Trait Meters
+      const setBar = (valId, barId, val) => {
+        const pct = Math.round(Math.min(Math.max(val || 0, 0), 1) * 100);
+        document.getElementById(valId).textContent = `${pct}%`;
+        document.getElementById(barId).style.width = `${pct}%`;
+      };
+
+      setBar("valWarmth", "barWarmth", rel.affection);
+      setBar("valTrust", "barTrust", rel.trust);
+      setBar("valFamiliarity", "barFamiliarity", rel.familiarity);
+      setBar("valPlayfulness", "barPlayfulness", rel.playfulness);
+      setBar("valTension", "barTension", rel.recent_tension);
+
+      const conf = Math.round(Math.min(turnCount / 10, 1.0) * 100);
+      document.getElementById("confidencePct").textContent = `${conf}%`;
+      document.getElementById("readConfidence").textContent = `Confidence: ${conf > 60 ? 'High' : (conf > 25 ? 'Moderate' : 'Low')}`;
+
+      if (rel.shared_history_summary) {
+        document.getElementById("sharedHistorySummary").textContent = rel.shared_history_summary.slice(0, 30) + "...";
+      }
+
+      // Current Read
+      if (latestEq.intent || latestEq.social_state) {
+        const emotion = latestEq.intent || "Engaged";
+        document.getElementById("dominantEmotion").innerHTML = `<span class="emotion-pill">${escapeHtml(emotion)}</span>`;
+        document.getElementById("situationRead").textContent = `Intensity: ${(latestEq.intensity || 0.5).toFixed(2)}`;
+        
+        let strat = "Adaptive rapport building";
+        if (latestEq.intensity > 0.6) strat = "Active empathy & emotional validation";
+        else if (rel.recent_tension > 0.3) strat = "De-escalate & calm clarification";
+        document.getElementById("strategyRead").textContent = strat;
+      }
+    }
+
+    // Render Style Match
+    function renderStyleMatch(data) {
+      const sim = Math.round(data.similarity || 90);
+      document.getElementById("simPct").textContent = `${sim}%`;
+
+      const gapsList = document.getElementById("styleGapsList");
+      gapsList.innerHTML = "";
+
+      if (data.biggest_gaps && data.biggest_gaps.length > 0) {
+        data.biggest_gaps.slice(0, 3).forEach(g => {
+          const div = document.createElement("div");
+          div.className = "gap-item";
+          div.innerHTML = `
+            <span class="gap-feature">${escapeHtml(g.feature)}</span>
+            <span class="gap-val">${escapeHtml(g.user)} vs ${escapeHtml(g.persona)}</span>
+          `;
+          gapsList.appendChild(div);
+        });
+      } else {
+        gapsList.innerHTML = `
+          <div class="gap-item"><span class="gap-feature">Cadence & Style</span><span class="gap-val">Aligned</span></div>
+        `;
+      }
+    }
+
+    // Render Memories
+    function renderMemories(memories) {
+      const list = document.getElementById("memoriesList");
+      document.getElementById("memoryCountBadge").textContent = `${memories.length} records`;
+
+      if (!memories || memories.length === 0) {
+        list.innerHTML = `<div class="empty-state">No long-term memories formed yet. Chat or use profile ingestion below.</div>`;
+        return;
+      }
+
+      list.innerHTML = "";
+      memories.forEach(m => {
+        const item = document.createElement("div");
+        item.className = "memory-item";
+        item.innerHTML = `
+          <div class="memory-body">
+            <span class="memory-tag ${escapeHtml(m.kind)}">${escapeHtml(m.kind || 'fact')}</span>
+            <div class="memory-text">${escapeHtml(m.content)}</div>
+          </div>
+          <button class="btn-delete-memory" data-id="${m.id}" title="Delete memory">&times;</button>
+        `;
+
+        const delBtn = item.querySelector(".btn-delete-memory");
+        delBtn.addEventListener("click", async () => {
+          if (confirm("Delete this memory?")) {
+            await deleteMemory(m.id);
+          }
+        });
+
+        list.appendChild(item);
+      });
+    }
+
+    // Delete Memory API call
+    async function deleteMemory(memoryId) {
+      try {
+        const res = await fetch(`${apiBase}/user/${userId}/memories/${memoryId}`, {
+          method: "DELETE"
+        });
+        if (res.ok) {
+          refreshDashboard();
+        }
+      } catch (err) {
+        console.error("Failed to delete memory:", err);
+      }
+    }
+
+    // Profile Ingestion
+    btnImportProfile.addEventListener("click", async () => {
+      const text = profileImportText.value.trim();
+      if (!text) return;
+
+      btnImportProfile.disabled = true;
+      importStatusMsg.textContent = "Ingesting facts & memories...";
+
+      try {
+        const res = await fetch(`${apiBase}/user/${userId}/profile/import`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          importStatusMsg.textContent = `✓ Created ${data.memories_created} memories!`;
+          profileImportText.value = "";
+          setTimeout(() => { importStatusMsg.textContent = ""; }, 4000);
+          refreshDashboard();
+        } else {
+          importStatusMsg.textContent = "Failed to import profile.";
+        }
+      } catch (err) {
+        importStatusMsg.textContent = "Error contacting API.";
+      } finally {
+        btnImportProfile.disabled = false;
+      }
     });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-    addMsg("assistant", data.response, data.debug);
-  } catch (err) {
-    addMsg("assistant", "[error contacting backend: " + err.message + "]");
-  }
-});
-</script>
+
+    // Chat Message Submission
+    chatForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const message = messageInput.value.trim();
+      if (!message) return;
+
+      // 1. Render User Message
+      appendMessage("user", message);
+      messageInput.value = "";
+      messageInput.style.height = "48px";
+
+      // 2. UI Loading State
+      btnSend.disabled = true;
+      typingIndicator.style.display = "flex";
+      scrollToBottom();
+
+      try {
+        const res = await fetch(`${apiBase}/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: userId,
+            session_id: sessionId,
+            message: message,
+            show_debug: chkShowDebug.checked
+          })
+        });
+
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+
+        const data = await res.json();
+        
+        let debugPayload = null;
+        if (data.debug || data.cpp_text_stats) {
+          debugPayload = {
+            ...(data.debug || {}),
+            cpp_text_stats: data.cpp_text_stats
+          };
+        }
+
+        appendMessage("assistant", data.response, debugPayload, data.character_name || "Nova");
+        
+        // Refresh dashboard to reflect latest emotional state & updated turns
+        refreshDashboard();
+
+      } catch (err) {
+        appendMessage("assistant", `[Connection warning: ${err.message}. Backend may be warming up.]`);
+      } finally {
+        btnSend.disabled = false;
+        typingIndicator.style.display = "none";
+        messageInput.focus();
+      }
+    });
+
+    // Handle multiline textarea (Enter to send, Shift+Enter for new line)
+    messageInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        chatForm.dispatchEvent(new Event("submit"));
+      }
+    });
+
+    // Auto-grow textarea height
+    messageInput.addEventListener("input", function() {
+      this.style.height = "48px";
+      this.style.height = (this.scrollHeight) + "px";
+    });
+
+    // Reset / New Profile Handler
+    btnNewProfile.addEventListener("click", () => {
+      if (confirm("Start a new profile? This will create a fresh user and clear active session memory.")) {
+        userId = "user_" + Math.random().toString(36).substring(2, 9);
+        sessionId = "session_" + Math.random().toString(36).substring(2, 9);
+        localStorage.setItem("persona_user_id", userId);
+        localStorage.setItem("persona_session_id", sessionId);
+        userIdLabel.textContent = userId;
+
+        // Reset chat
+        chatStream.innerHTML = `
+          <div class="msg-group assistant">
+            <div class="msg-sender-tag">Nova</div>
+            <div class="msg-bubble">
+              Hello! I'm Nova. I listen carefully, notice how you're feeling, and adapt to how you prefer to communicate over time. What's on your mind today?
+            </div>
+          </div>
+        `;
+        refreshDashboard();
+      }
+    });
+
+    btnRefreshDashboard.addEventListener("click", () => {
+      refreshDashboard();
+    });
+
+    // Initial load
+    refreshDashboard();
+  </script>
 </body>
 </html>

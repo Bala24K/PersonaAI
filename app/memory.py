@@ -56,7 +56,7 @@ class MemoryStore:
     def all_for_user(self, user_id: str) -> list[Memory]:
         with self._db.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM memories WHERE user_id = :uid", {"uid": user_id}
+                "SELECT * FROM memories WHERE user_id = :uid ORDER BY importance DESC, created_at DESC", {"uid": user_id}
             ).fetchall()
         return [
             Memory(
@@ -66,6 +66,20 @@ class MemoryStore:
             )
             for r in rows
         ]
+
+    def delete(self, user_id: str, memory_id: int) -> bool:
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM memories WHERE id = :id AND user_id = :uid",
+                {"id": memory_id, "uid": user_id},
+            ).fetchone()
+            if not row:
+                return False
+            conn.execute(
+                "DELETE FROM memories WHERE id = :id AND user_id = :uid",
+                {"id": memory_id, "uid": user_id},
+            )
+            return True
 
     def retrieve(self, user_id: str, query: str, k: int = 6) -> list[Memory]:
         """Embedding-ish retrieval + recency + importance + reranking, per Section 7:

@@ -144,6 +144,257 @@ def chat(req: ChatRequest, request: Request):
     )
 
 
+# --- User State, Memories & Mind Dashboard Endpoints ---
+
+class ProfileImportRequest(BaseModel):
+    text: str = Field(..., description="Raw text blob to ingest into memories and user model")
+
+
+@app.get("/character")
+def get_character():
+    """Returns metadata about the active companion character."""
+    return {
+        "name": _character.name,
+        "description": _character.identity,
+        "traits": _character.personality_traits,
+        "voice": _character.speaking_style,
+        "llm_provider": type(_persona.llm).__name__,
+    }
+
+
+@app.get("/user/{user_id}/state")
+@app.get("/user/{user_id}/model")
+def get_user_state(user_id: str):
+    """Returns persistent user model, relationship state, and observations."""
+    _persona.db.ensure_user(user_id)
+    profile, relationship = _persona.user_state.load(user_id)
+    turn_count = _persona._session_turn_count(user_id, "")
+    latest_eq = _persona._latest_eq_state(user_id)
+
+    confidence = round(min(turn_count / 10.0, 1.0), 2)
+    traits = [
+        {"name": "Warmth", "value": round(relationship.affection, 2), "confidence": confidence, "evidence_count": turn_count},
+        {"name": "Trust", "value": round(relationship.trust, 2), "confidence": confidence, "evidence_count": turn_count},
+        {"name": "Familiarity", "value": round(relationship.familiarity, 2), "confidence": confidence, "evidence_count": turn_count},
+        {"name": "Playfulness", "value": round(relationship.playfulness, 2), "confidence": confidence, "evidence_count": turn_count},
+        {"name": "Tension", "value": round(relationship.recent_tension, 2), "confidence": confidence, "evidence_count": turn_count},
+    ]
+
+    return {
+        "user_id": user_id,
+        "turn_count": turn_count,
+        "traits": traits,
+        "relationship": {
+            "familiarity": relationship.familiarity,
+            "trust": relationship.trust,
+            "affection": relationship.affection,
+            "playfulness": relationship.playfulness,
+            "recent_tension": relationship.recent_tension,
+            "shared_history_summary": relationship.shared_history_summary,
+        },
+        "profile": {
+            "important_facts": profile.important_facts,
+            "recurring_interests": profile.recurring_interests,
+            "preferences": profile.preferences,
+            "communication_preferences": profile.communication_preferences,
+        },
+        "latest_eq": latest_eq,
+    }
+
+
+@app.get("/user/{user_id}/memories")
+def get_user_memories(user_id: str):
+    """Returns all long-term and episodic memories stored for the user."""
+    _persona.db.ensure_user(user_id)
+    memories = _persona.memory.all_for_user(user_id)
+    return {
+        "memories": [
+            {
+                "id": m.id,
+                "kind": m.kind,
+                "content": m.content,
+                "importance": m.importance,
+                "created_at": m.created_at,
+                "last_accessed_at": m.last_accessed_at,
+                "access_count": m.access_count,
+            }
+            for m in memories
+        ]
+    }
+
+
+@app.delete("/user/{user_id}/memories/{memory_id}")
+def delete_user_memory(user_id: str, memory_id: int):
+    """Deletes a specific memory record for the user."""
+    success = _persona.memory.delete(user_id, memory_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"status": "deleted", "memory_id": memory_id}
+
+
+@app.post("/user/{user_id}/profile/import")
+@app.post("/profile/import")
+def import_user_profile(req: ProfileImportRequest, user_id: Optional[str] = None):
+    """Ingests profile text samples and creates memories/facts."""
+    uid = user_id or "default_user"
+    text_content = req.text
+    if not text_content.strip():
+        raise HTTPException(status_code=400, detail="Profile text cannot be empty")
+
+    _persona.db.ensure_user(uid)
+    lines = [line.strip() for line in text_content.split("\n") if line.strip()]
+    created_ids = []
+
+    profile, relationship = _persona.user_state.load(uid)
+    for line in lines:
+        if len(line) < 3:
+            continue
+        kind = "preference" if any(w in line.lower() for w in ["like", "prefer", "love", "hate", "favorite"]) else "semantic"
+        mem_id = _persona.memory.add(uid, kind=kind, content=line, importance=0.75)
+        created_ids.append(mem_id)
+        if line not in profile.important_facts:
+            profile.important_facts.append(line)
+
+    _persona.user_state.save(uid, profile, relationship)
+
+    return {
+        "memories_created": len(created_ids),
+        "memory_ids": created_ids,
+        "message": f"Successfully ingested {len(created_ids)} profile statements",
+    }
+
+
+@app.get("/user/{user_id}/style")
+def get_user_style(user_id: str):
+    """Analyzes communication style vectors and computes conversational alignment."""
+    with _persona.db.connect() as conn:
+        user_rows = conn.execute(
+            "SELECT content FROM turns WHERE user_id = :uid AND role = 'user'",
+            {"uid": user_id},
+        ).fetchall()
+        assistant_rows = conn.execute(
+            "SELECT content FROM turns WHERE user_id = :uid AND role = 'assistant'",
+            {"uid": user_id},
+        ).fetchall()
+
+    user_texts = [r["content"] for r in user_rows]
+    assistant_texts = [r["content"] for r in assistant_rows]
+
+    def _calc_metrics(texts: list[str]) -> dict[str, Any]:
+        if not texts:
+            return {
+                "sample_size": 0,
+                "avg_words": 0.0,
+                "question_rate": 0.0,
+                "exclamation_rate": 0.0,
+                "lexical_richness": 0.0,
+                "flesch_reading_ease": 70.0,
+            }
+        total_words = 0
+        total_questions = 0
+        total_exclamations = 0
+        all_words = []
+        for t in texts:
+            words = t.split()
+            total_words += len(words)
+            all_words.extend([w.lower() for w in words])
+            if "?" in t:
+                total_questions += 1
+            if "!" in t:
+                total_exclamations += 1
+
+        n = len(texts)
+        avg_words = round(total_words / n, 1)
+        q_rate = round(total_questions / n, 2)
+        excl_rate = round(total_exclamations / n, 2)
+        lex_richness = round(len(set(all_words)) / max(len(all_words), 1), 2)
+
+        sample_str = " ".join(texts[-5:])
+        cpp_res = analyze_text_cpp(sample_str)
+        flesch = cpp_res.get("flesch_reading_ease", 70.0)
+
+        return {
+            "sample_size": n,
+            "avg_words": avg_words,
+            "question_rate": q_rate,
+            "exclamation_rate": excl_rate,
+            "lexical_richness": lex_richness,
+            "flesch_reading_ease": flesch,
+        }
+
+    u_metrics = _calc_metrics(user_texts)
+    a_metrics = _calc_metrics(assistant_texts)
+
+    similarity = 100.0
+    gaps = []
+    if u_metrics["sample_size"] > 0 and a_metrics["sample_size"] > 0:
+        len_gap = abs(u_metrics["avg_words"] - a_metrics["avg_words"]) / max(u_metrics["avg_words"], a_metrics["avg_words"], 1.0)
+        q_gap = abs(u_metrics["question_rate"] - a_metrics["question_rate"])
+        lex_gap = abs(u_metrics["lexical_richness"] - a_metrics["lexical_richness"])
+
+        sim_val = max(0.0, min(100.0, 100.0 - (len_gap * 40.0 + q_gap * 30.0 + lex_gap * 30.0)))
+        similarity = round(sim_val, 1)
+
+        gaps = [
+            {"feature": "Average Message Length", "gap": round(len_gap, 2), "user": f"{u_metrics['avg_words']} words", "persona": f"{a_metrics['avg_words']} words"},
+            {"feature": "Inquiry / Question Rate", "gap": round(q_gap, 2), "user": f"{int(u_metrics['question_rate']*100)}%", "persona": f"{int(a_metrics['question_rate']*100)}%"},
+            {"feature": "Vocabulary Richness", "gap": round(lex_gap, 2), "user": f"{int(u_metrics['lexical_richness']*100)}%", "persona": f"{int(a_metrics['lexical_richness']*100)}%"},
+        ]
+        gaps.sort(key=lambda g: g["gap"], reverse=True)
+
+    return {
+        "user_style": u_metrics,
+        "assistant_style": a_metrics,
+        "similarity": similarity,
+        "biggest_gaps": gaps,
+        "sample_sizes": {
+            "user_messages": u_metrics["sample_size"],
+            "assistant_messages": a_metrics["sample_size"],
+        },
+    }
+
+
+@app.get("/user/{user_id}/history")
+@app.get("/conversation/{session_id}/history")
+def get_conversation_history(user_id: Optional[str] = None, session_id: Optional[str] = None):
+    """Retrieves chronological conversation history."""
+    import json as _json
+    with _persona.db.connect() as conn:
+        if session_id and user_id:
+            rows = conn.execute(
+                "SELECT role, content, eq_state_json, eval_score_json, created_at FROM turns "
+                "WHERE user_id = :uid AND session_id = :sid ORDER BY id ASC",
+                {"uid": user_id, "sid": session_id},
+            ).fetchall()
+        elif session_id:
+            rows = conn.execute(
+                "SELECT role, content, eq_state_json, eval_score_json, created_at FROM turns "
+                "WHERE session_id = :sid ORDER BY id ASC",
+                {"sid": session_id},
+            ).fetchall()
+        elif user_id:
+            rows = conn.execute(
+                "SELECT role, content, eq_state_json, eval_score_json, created_at FROM turns "
+                "WHERE user_id = :uid ORDER BY id ASC",
+                {"uid": user_id},
+            ).fetchall()
+        else:
+            return {"messages": []}
+
+    messages = []
+    for r in rows:
+        eq = _json.loads(r["eq_state_json"]) if r["eq_state_json"] else None
+        ev = _json.loads(r["eval_score_json"]) if r["eval_score_json"] else None
+        messages.append({
+            "role": r["role"],
+            "content": r["content"],
+            "created_at": r["created_at"],
+            "eq_state": eq,
+            "eval_score": ev,
+        })
+    return {"messages": messages}
+
+
 # --- Asynchronous Task Processing Routes ---
 
 @app.post("/tasks/memory-extraction", response_model=TaskResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -301,4 +552,21 @@ def readiness():
         media_type="application/json",
         status_code=status_code,
     )
+
+
+# --- Web UI Mounting ---
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
+
+_frontend_dir = Path(__file__).resolve().parent / "frontend"
+if _frontend_dir.exists():
+    app.mount("/ui", StaticFiles(directory=str(_frontend_dir), html=True), name="frontend")
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    """Redirect root to the interactive Web Chat UI."""
+    return RedirectResponse(url="/ui/")
+
 
