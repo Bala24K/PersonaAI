@@ -1,0 +1,26 @@
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.6
+anthropic>=0.34
+scikit-learn>=1.4
+numpy>=1.26
+python-dotenv>=1.0
+pyyaml>=6.0
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+redis>=5.0
+celery>=5.3
+pymongo>=4.0
+pika>=1.3.0
+
+
+# Only needed for training/sft_train.py and training/dpo_train.py, which require a GPU
+# machine with model-hub access — not installable/runnable in a network-restricted,
+# GPU-less sandbox. Uncomment on a real training box:
+# torch
+# transformers
+# peft
+# trl
+# datasets
+# accelerate
+# bitsandbytes

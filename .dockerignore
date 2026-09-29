@@ -1,0 +1,12 @@
+.env
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+data/*.db
+data/test_*.db
+cpp/build
+cpp/*.exe

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Persona AI — Test Chat</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }
+  #log { border: 1px solid #8884; border-radius: 8px; padding: 12px; height: 420px; overflow-y: auto; margin-bottom: 12px; }
+  .msg { margin-bottom: 10px; line-height: 1.4; }
+  .msg .role { font-weight: 600; margin-right: 6px; }
+  .msg.user .role { color: #4a7; }
+  .msg.assistant .role { color: #57a; }
+  .debug { font-size: 12px; opacity: 0.6; margin-top: 2px; white-space: pre-wrap; }
+  form { display: flex; gap: 8px; }
+  input[type=text] { flex: 1; padding: 8px; border-radius: 6px; border: 1px solid #8888; }
+  button { padding: 8px 16px; border-radius: 6px; border: none; background: #57a; color: white; cursor: pointer; }
+  .config { font-size: 12px; margin-bottom: 8px; opacity: 0.7; }
+  label { margin-right: 12px; }
+</style>
+</head>
+<body>
+<h2>Persona AI — Test Chat</h2>
+<div class="config">
+  API base: <input id="apiBase" type="text" value="http://localhost:8000" size="28">
+  <label><input type="checkbox" id="showDebug"> show EQ/eval debug</label>
+</div>
+<div id="log"></div>
+<form id="form">
+  <input id="input" type="text" placeholder="Say something..." autocomplete="off">
+  <button type="submit">Send</button>
+</form>
+
+<script>
+const userId = "web_user_" + Math.random().toString(36).slice(2, 8);
+const sessionId = "web_session_" + Math.random().toString(36).slice(2, 8);
+const log = document.getElementById("log");
+const form = document.getElementById("form");
+const input = document.getElementById("input");
+
+function addMsg(role, text, debug) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.innerHTML = `<span class="role">${role === "user" ? "You" : "Persona"}:</span>${escapeHtml(text)}`;
+  if (debug) {
+    const d = document.createElement("div");
+    d.className = "debug";
+    d.textContent = JSON.stringify(debug, null, 2);
+    div.appendChild(d);
+  }
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const message = input.value.trim();
+  if (!message) return;
+  addMsg("user", message);
+  input.value = "";
+
+  const apiBase = document.getElementById("apiBase").value.replace(/\/$/, "");
+  const showDebug = document.getElementById("showDebug").checked;
+
+  try {
+    const res = await fetch(apiBase + "/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, session_id: sessionId, message, show_debug: showDebug })
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    addMsg("assistant", data.response, data.debug);
+  } catch (err) {
+    addMsg("assistant", "[error contacting backend: " + err.message + "]");
+  }
+});
+</script>
+</body>
+</html>

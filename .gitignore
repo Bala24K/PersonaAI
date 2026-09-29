@@ -1,0 +1,31 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+ENV/
+
+# Environment and Secrets (CRITICAL)
+.env
+.env.local
+.env.*.local
+
+# Databases & Cache
+data/*.db
+data/test_*.db
+data/chroma/
+.pytest_cache/
+*.log
+
+# C++ Build Artifacts & Binaries
+cpp/*.exe
+cpp/persona_cpp_analyzer
+cpp/test_analyzer
+cpp/build/
+bin/
+
+# OS Specific
+.DS_Store
+Thumbs.db

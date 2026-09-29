@@ -1,0 +1,13 @@
+# Everything ml/training/ and ml/evaluation/ need to run standalone,
+# without installing backend/requirements.txt. This file's completeness
+# is actually tested, not assumed: ml/evaluation's own isolated-venv
+# fresh-install check caught a real gap here once (app.critic and
+# app.user_model.model transitively needed `requests` and `sqlalchemy`
+# even though the eval scripts never touch either) — fixed by deferring
+# the requests-dependent import in critic.py and splitting the
+# DB-independent TraitEstimate dataclass out of model.py, not by
+# padding this file with dependencies the eval scripts don't actually
+# need. See docs/ARCHITECTURE.md's evaluation section for the full story.
+pandas>=2.0
+scikit-learn>=1.4
+joblib>=1.3

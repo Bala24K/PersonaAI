@@ -1,0 +1,43 @@
+Drift detection evaluation (hand-constructed cases, n=6)
+
+Correct: 6/6 = 100.0%
+
+real_reversal_crossing_default
+  expected=drift got=drift [OK]
+  rationale: genuine detailed->concise reversal; early window catches it mid-climb
+  reported: real reversal crossing default has decreased from 0.58 to 0.34 (-0.24) across 10 observations
+
+real_step_change
+  expected=drift got=drift [OK]
+  rationale: clean sustained shift with a settled endpoint
+  reported: real step change has decreased from 0.80 to 0.30 (-0.50) across 16 observations
+
+pure_decay_from_default
+  expected=silent got=silent [OK]
+  rationale: one-sided convergence from the 0.5 default, not a change in the person
+
+erratic
+  expected=silent got=silent [OK]
+  rationale: inconsistent, never settles — recent-window stddev bar rejects this
+
+flat
+  expected=silent got=silent [OK]
+  rationale: no change at all — the common case; detector must stay silent
+
+tiny_wobble
+  expected=silent got=silent [OK]
+  rationale: ordinary EWMA jitter, below the magnitude bar
+
+The four should-stay-silent cases are the point of this evaluation.
+Three of them (pure_decay_from_default, erratic, and the naive-comparison
+failure that real_reversal_crossing_default guards against) each broke a
+version of this detector during development — this file is the regression
+test that keeps them fixed. A drift detector that fires readily is worse
+than none at all: it would tell a user their personality changed every
+time an estimate settled, which is both wrong and the kind of wrong that
+erodes trust in everything else the system claims to know about them.
+
+Caveat, same as the rest of this harness: these are hand-constructed
+series chosen to represent shapes seen during real testing, not sampled
+from production usage. They validate the detector's logic, not that these
+are the only shapes real users produce.

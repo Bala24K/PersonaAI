@@ -1,0 +1,20 @@
+Trained on 39744 examples (33782 train / 5962 test)
+Accuracy: 0.4019
+Macro F1: 0.3330
+
+              precision    recall  f1-score   support
+
+       anger      0.220     0.288     0.249       215
+     anxiety      0.359     0.341     0.350      1268
+         joy      0.617     0.554     0.583      1967
+     neutral      0.371     0.359     0.365      1287
+     sadness      0.300     0.329     0.314       897
+    surprise      0.114     0.168     0.136       328
+
+    accuracy                          0.402      5962
+   macro avg      0.330     0.340     0.333      5962
+weighted avg      0.419     0.402     0.409      5962
+
+
+Training time: 7.6s
+Classes NOT covered by this classifier (use lexicon fallback): fear, disgust, frustration

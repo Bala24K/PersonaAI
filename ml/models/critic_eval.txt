@@ -1,0 +1,25 @@
+Response critic evaluation (hand-labeled test set, n=22)
+
+TP=10  FP=0  TN=12  FN=0
+Precision: 100.0%
+Recall: 100.0%
+Specificity: 100.0%
+
+Precision and specificity matter as much as recall here: a critic with
+high recall but low specificity flags good replies constantly, which is
+worse than no critic at all (wasted regenerations, possible degradation
+of an already-fine reply). This test set was designed with that in mind —
+every check has both a triggering case and a close-but-shouldn't-trigger
+case, not just clean positive examples.
+
+Honest caveat on a perfect score: the same person who wrote the four
+heuristic checks also wrote this test set, so a clean 100% here mostly
+confirms the checks do what they were literally written to do, not that
+they'll generalize to the full variety of real replies a live model would
+produce. Real text will hedge, combine acknowledgment and advice in the
+same clause, or use phrasing these patterns don't recognize at all — this
+eval is a regression test against known cases, not independent validation.
+The honest next step would be running the critic against real generated
+replies from a live model and having a person (ideally not the one who
+wrote the heuristics) judge agreement — not done here, no live API access
+in this build environment to generate that data.

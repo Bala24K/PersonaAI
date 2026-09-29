@@ -1,0 +1,14 @@
+Strategy selection evaluation (hand-labeled test set, n=16)
+
+Accuracy: 16/16 = 100.0%
+
+Caveat: strategy appropriateness is inherently more subjective than the
+other evaluations in this harness. The two 'harder cases' were included
+specifically to demonstrate a real, known limitation — situation
+classification is regex-based (see emotion/engine.py's SITUATION_PATTERNS)
+and doesn't understand sarcasm or reframing, so 'rejected but relieved'
+still triggers the standard rejection strategy even though a human would
+read the message as basically fine. Fixing this well would need actual
+sentiment-of-the-whole-sentence understanding, not a better regex — a
+natural argument for the LLM-based critique tier (CRITIC_MODE=heuristic_llm)
+catching what pattern matching structurally can't.

@@ -1,0 +1,13 @@
+Memory extraction evaluation (hand-labeled test set, n=35)
+
+Recall:         21/21 = 100.0%
+Type accuracy:  21/21 = 100.0%
+Precision:      14/14 = 100.0%
+
+Note: this test set was constructed by hand for this evaluation, not
+sampled from real usage, and includes several cases chosen specifically
+because the heuristic extractor's regex patterns are known not to catch
+them (see the 'harder/ambiguous cases' section in this script) — recall
+on real conversational data, which skews toward clearer statements the
+patterns were actually designed around, would likely be somewhat higher
+than this number suggests, not lower.

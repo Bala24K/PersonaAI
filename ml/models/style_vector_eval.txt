@@ -1,0 +1,22 @@
+StyleVector discrimination + similarity-metric sanity check
+
+All checks passed: True
+
+Per-feature discrimination (formal vs. casual hand-constructed personas):
+  exclamation_rate: formal=0.000 casual=7.143 [OK]
+  emoji_rate: formal=0.000 casual=7.143 [OK]
+  slang_rate: formal=0.000 casual=35.714 [OK]
+  abbreviation_rate: formal=0.000 casual=17.857 [OK]
+  avg_sentence_length: formal=9.800 casual=4.667 [OK]
+  capitalization_rate: formal=1.000 casual=0.000 [OK]
+
+self_similarity=1.000  cross_similarity=0.432  variant_similarity=0.952
+
+Note: this validates that the StyleVector system behaves correctly on
+clearly-differentiated hand-constructed examples, not that it perfectly
+captures 'style' in some objective sense (no such ground truth exists).
+The real-world use of this system — GET /user/{id}/style, comparing an
+actual person's messages to the AI's replies — was spot-checked manually
+during development (see docs/DEMO_SCRIPT.md) rather than formally
+evaluated here, since there's no labeled dataset of 'correct' style-match
+scores for real conversations to check against.
