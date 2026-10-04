@@ -7,27 +7,24 @@ This version: same *interface and state-transition logic* (S_t = f(C_t, S_{t-1})
 f is an LLM-prompted structured extraction instead of a trained encoder. This is strictly
 a latency/cost tradeoff, not a logic tradeoff — swapping in a real trained model later
 means replacing `_infer_raw_state` only.
+
+Production hardening:
+- All LLM outputs validated through Pydantic schemas before entering state
+- Uses versioned prompt templates
+- Observability via structured logging
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from app.llm_client import LLMClient
+from app.prompts import prompt_registry
 
-EQ_SYSTEM_PROMPT = """You are an emotional/social state extraction module. Given recent
-conversation turns and the previous state, output the user's CURRENT emotional and social
-state as JSON with this exact shape:
-{
-  "emotion": {"<label>": <0-1 float>, ...},   // 1-3 dominant emotions
-  "intensity": <0-1 float>,
-  "intent": "<short label, e.g. venting|sharing|asking|joking|seeking_advice>",
-  "need": "<short label, e.g. validation|information|celebration|space>",
-  "social_state": {"openness": <0-1>, "trust": <0-1>, "irritation": <0-1>},
-  "confidence": <0-1 float, how confident you are given the available context>
-}
-Base your estimate on the current message primarily, but let it be continuous with the
-previous state rather than jumping erratically unless the current message clearly signals
-a shift."""
+logger = logging.getLogger("persona_ai.eq")
+
+# Keep the prompt constant for backward compatibility, but reference the versioned template
+EQ_SYSTEM_PROMPT = prompt_registry.get("eq_extraction").system_instructions
 
 
 @dataclass
@@ -79,7 +76,11 @@ class EQState:
 
 
 class EQEstimator:
-    """Implements S_t = f_theta(C_t, S_{t-1})."""
+    """Implements S_t = f_theta(C_t, S_{t-1}).
+
+    Uses validated structured output: LLM JSON is validated through EQStateSchema
+    before it becomes application state.
+    """
 
     def __init__(self, llm: LLMClient):
         self._llm = llm
@@ -92,5 +93,10 @@ class EQEstimator:
             f"CURRENT USER MESSAGE:\n{current_message}\n\n"
             f"Output the updated state JSON now."
         )
-        raw = self._llm.complete_json(EQ_SYSTEM_PROMPT, prompt)
+
+        # Use validated JSON extraction — output is guaranteed to match schema
+        # or falls back to safe defaults rather than corrupting state
+        raw = self._llm.complete_json_validated(
+            EQ_SYSTEM_PROMPT, prompt, schema_name="EQStateSchema"
+        )
         return EQState.from_dict(raw)

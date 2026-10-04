@@ -1,4 +1,4 @@
-# PersonaAI — Production AI Backend
+# PersonaAI — Production-Oriented AI Backend
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-2.0-009688.svg)](https://fastapi.tiangolo.com/)
@@ -8,239 +8,183 @@
 [![Redis](https://img.shields.io/badge/Redis-7.0-DC382D.svg)](https://redis.io/)
 [![Celery](https://img.shields.io/badge/Celery-5.4-37814A.svg)](https://docs.celeryq.dev/)
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C.svg)](https://isocpp.org/)
-[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg)](https://www.docker.com/)
-[![AWS Ready](https://img.shields.io/badge/AWS-Deployment%20Ready-FF9900.svg)](docs/AWS_DEPLOYMENT.md)
 
-PersonaAI is a production-oriented AI backend that builds a dynamic, long-term memory and personalized emotional model of users during multi-turn interactions.
+PersonaAI is a **development-stage** AI backend that builds a dynamic, long-term memory and personalized emotional model of users during multi-turn interactions. It combines retrieval-augmented generation, multi-provider LLM orchestration, and structured state management into a testable system.
 
-It combines a **FastAPI API layer**, **PostgreSQL** relational state management, **MongoDB** event/interaction trace logging, **RabbitMQ** task queue messaging, **Redis** short-lived caching and Celery result backend, **Celery** background workers, and a native **C++17 text analytics component** into a deployable, scalable microservice stack.
+> **⚠️ Status**: This is an engineering R&D project, not a production-ready product. See [Limitations](#limitations) below for what is and isn't implemented.
 
 ---
 
-## 1. System Architecture
+## Architecture Overview
 
 ```mermaid
 flowchart TD
-    Client[Client / Web UI / Mobile] -->|Synchronous HTTP| FastAPI["FastAPI API Layer\n(uvicorn main:app)"]
+    Client[Client / Web UI] -->|HTTP| FastAPI["FastAPI API Layer"]
     
-    subgraph SynchronousFlow["Synchronous Path"]
-        FastAPI -->|1. Text Analysis| Cpp["C++17 Text Analyzer\n(persona_cpp_analyzer CLI)"]
-        FastAPI -->|2. Trait & Turn Persistence| Postgres[("PostgreSQL\n(Structured State)")]
-        FastAPI -->|3. Interaction Telemetry| Mongo[("MongoDB\n(Event & Job Traces)")]
+    subgraph Pipeline["Synchronous Response Pipeline"]
+        FastAPI -->|1| EQ["EQ Estimator<br/>(sklearn trained model<br/>or LLM-prompted)"]
+        FastAPI -->|2| RAG["Memory Retrieval<br/>(TF-IDF similarity +<br/>recency + importance)"]
+        EQ --> Planner["Dialogue Planner<br/>(versioned prompt templates)"]
+        RAG --> Planner
+        Planner -->|3| LLM["Multi-Provider LLM<br/>(with retry, fallback,<br/>timeout handling)"]
+        LLM -->|4| Validator["Pydantic Schema<br/>Validation"]
+        Validator -->|5| Evaluator["Response Evaluator<br/>(heuristic + LLM critic)"]
+        Evaluator -->|reject| LLM
+        Evaluator -->|accept| Response["Response + State Update"]
     end
     
-    subgraph AsynchronousFlow["Asynchronous Path"]
-        FastAPI -->|4. Enqueue Job| RabbitMQ["RabbitMQ Broker\n(Task Messages)"]
-        RabbitMQ -->|5. Deliver Task| CeleryWorker["Celery Workers\n(Async Jobs)"]
-        
-        CeleryWorker -->|Memory Extraction| Postgres
-        CeleryWorker -->|Execution Telemetry| Mongo
-        CeleryWorker -->|Store Task Result| Redis[("Redis\n(Result Backend & Cache)")]
-        CeleryBeat["Celery Beat\n(Nightly/Weekly Cron)"] -->|Schedule Jobs| RabbitMQ
-    end
+    FastAPI --> Postgres[("PostgreSQL<br/>(Structured State)")]
+    FastAPI --> Mongo[("MongoDB<br/>(Event Traces)")]
+    FastAPI -->|Async Tasks| RabbitMQ["RabbitMQ"] --> Celery["Celery Workers"]
+    Celery --> Redis[("Redis<br/>(Results)")]
 ```
 
 ---
 
-## 2. Component Responsibilities
+## What's Actually In This Repo
 
-| Component | Technology | Primary Responsibility |
-|---|---|---|
-| **API Layer** | FastAPI (Python 3.12+) | HTTP request validation, correlation ID middleware, API routing, `/ready` & `/health` probes |
-| **Relational Database** | PostgreSQL 16 | ACID-compliant structured state: user profiles, emotional relationship states, candidate turns, memory records |
-| **Document Store** | MongoDB 7.0 | Append-only event telemetry, AI interaction traces, async job execution logs, evaluation records |
-| **Message Broker** | RabbitMQ 3.13 | Decoupled asynchronous task queueing, late acknowledgement semantics (`acks_late=True`), message persistence |
-| **Cache & Task Results** | Redis 7.0 | Celery task result backend, short-lived session state, fast key-value caching |
-| **Background Processing**| Celery 5.4 | Asynchronous job execution (memory consolidation, async memory extraction, evaluation tasks) with exponential retries |
-| **Native Computational Engine**| C++17 | Subprocess CLI engine for high-performance lexical analysis, readability scoring, and 16-dim feature hashing |
+### Retrieval System (Memory/RAG)
+- **Implementation**: TF-IDF cosine similarity over per-user memory stores, combined with recency and importance scoring. This is **not** a learned embedding model — it's a configurable retrieval system designed so a real embedding backend (sentence-transformers, API embeddings) can be dropped in by implementing the `EmbeddingBackend` interface in `app/memory.py`.
+- **User isolation**: Every retrieval query is scoped to a single `user_id`. Cross-user retrieval is explicitly tested and prevented.
+- **Configurable**: Top-k, kind filtering, and minimum importance thresholds are configurable.
 
----
+### LLM Integration (External API)
+- **Multi-provider**: OpenRouter, Groq, Google Gemini, Cohere, Anthropic — cascading fallback chain.
+- **Reliability**: Configurable timeout, bounded retry with exponential backoff, provider-level failure isolation.
+- **Observability**: Every LLM call is instrumented with latency, token usage, retry count, and provider metrics.
+- **Deterministic fallback**: MockLLMClient provides offline/credential-free operation.
 
-## 3. Data Architecture: PostgreSQL vs MongoDB
+### Structured Output Validation
+- **Pydantic schemas** (`app/schemas.py`) validate all LLM-generated JSON before it enters application state.
+- **Retry on validation failure**: If LLM output doesn't match schema, the system retries with validation feedback.
+- **Safe defaults**: If all validation attempts fail, schema defaults are used rather than corrupting persistent state.
 
-PersonaAI separates data responsibilities based on data access patterns rather than using a single database for all workloads:
+### EQ Estimator (Emotion/Intent Classification)
+- **Trained model** (`app/ml/eq_model.py`): Real scikit-learn multi-task classifier (TF-IDF features → per-task heads for emotion, intent, need, social state). This is **not** a fine-tuned transformer — it's an sklearn model trained on bootstrapped/templated data, explicitly noted as such.
+- **LLM fallback**: When no trained model is available, uses LLM-prompted structured extraction with the same interface.
+- **Temporal continuity**: Exponential smoothing on trained model outputs to prevent state whiplash.
 
-### PostgreSQL (Structured Relational State)
-- **Use Case:** Core transactional and relational entities where schema enforcement and ACID consistency are required.
-- **Tables:**
-  - `users`: User entity tracking and creation timestamps.
-  - `user_state`: User profile JSON, emotional tendencies, and relationship metrics (familiarity, trust, affection).
-  - `memories`: Fact and episodic memory items with importance weights, access counts, and decay tracking.
-  - `turns`: Sequential conversation message history.
-  - `candidates`: Model response candidates (accepted vs. rejected) for DPO preference dataset generation.
+### Prompt Engineering
+- **Versioned templates** (`app/prompts.py`): All prompts are defined as versioned `PromptTemplate` objects with explicit separation of system instructions, task instructions, and retrieved context.
+- **Prompt injection prevention**: System instructions are clearly demarcated with `[SYSTEM INSTRUCTIONS — DO NOT OVERRIDE]` markers. Retrieved content is explicitly labeled as reference material.
+- **Traceability**: Prompt version tags are embedded in every response and visible in evaluation output.
 
-### MongoDB (Unstructured Telemetry & Event Traces)
-- **Use Case:** High-frequency append-only document logs, execution metadata, and flexible schema records where query filters target nested JSON subdocuments.
-- **Collections:**
-  - `interaction_events`: Full turn payloads, including C++ text stats, latency breakdown, and model debug info.
-  - `async_job_logs`: Execution records of Celery tasks, including task duration, input parameters, result payload, and error tracebacks.
-  - `evaluation_records`: SFT/DPO export metrics and model evaluation run outputs.
+### Evaluation Harness
+- **6 existing evaluations**: Emotion classifier ablation, memory extraction, response critic, strategy selection, style vector, personality drift.
+- **7 extended evaluations**: Retrieval relevance, context recall, response grounding, structured output validity, hallucination checks, regression tests, latency/token tracking.
+- **Evaluation data**: Hand-built test sets including adversarial cases. These are not independently validated.
 
----
+### Security / Data Isolation
+- **User isolation**: SQL queries filter by `user_id`. Memory retrieval is scoped per-user. Delete operations require matching `user_id`.
+- **Optional API key auth**: Set `PERSONA_API_KEY` env var to require Bearer token authentication on all endpoints except `/health` and `/ready`.
+- **Tested**: Dedicated cross-user isolation tests verify no memory, turn, or state leakage.
 
-## 4. Infrastructure Architecture: RabbitMQ vs Redis
+### Background Processing
+- **Celery + RabbitMQ + Redis**: Async tasks for memory extraction, consolidation, evaluation, and dataset export.
+- **Failure handling**: `autoretry_for=(Exception,)`, `retry_backoff=True`, `max_retries=3`, `task_acks_late=True`.
+- **Audit logging**: Every task execution logged to MongoDB with duration, status, and error details.
 
-### RabbitMQ (Task & Message Broker)
-- **Why RabbitMQ over Redis for Queues?**
-  RabbitMQ acts strictly as the **Celery message broker**. It provides robust AMQP protocol guarantees, durable queues, consumer acknowledgements (`acks_late=True`), task prefetching, and worker heartbeat management. This ensures no background tasks (e.g. memory consolidation, batch evaluation) are lost if a worker process crashes mid-execution.
-
-### Redis (Result Backend & Cache)
-- **Why Redis for Results & Caching?**
-  Redis acts as the **Celery result backend** (`REDIS_URL`) and short-lived application cache. It offers low-latency key-value lookups with TTL expiration (`result_expires=3600`) for async task status polling via `GET /tasks/{task_id}`.
-
----
-
-## 5. Native C++17 Component (`persona_cpp_analyzer`)
-
-### Why C++17?
-High-frequency text analytics (e.g., tokenizing large incoming messages, calculating lexical diversity, syllable-based readability scoring, and vectorizing text via feature hashing) can be CPU-intensive when processed synchronously in Python. The C++17 module offloads computational workload into a compiled binary.
-
-### Key Metrics Computed:
-- **Lexical Statistics:** Character count, word count, sentence count, average word length, Type-Token Ratio (TTR).
-- **Readability Scoring:** Flesch Reading Ease score derived from syllable counts and sentence length.
-- **Emotion Keyword Frequency:** Fast scanning against positive, negative, anxiety, and urgency lexicons.
-- **Feature Hashing (16-dim):** Fixed-size normalized feature projection vector using FNV-1a hashing.
-
-### Integration Mechanism & Fallback:
-Python invokes the C++ binary via a clean subprocess CLI boundary (`app/cpp_wrapper.py`). 
-If the binary is missing or fails, `analyze_text_cpp` **gracefully falls back to a pure-Python analyzer**, ensuring zero downtime or hard crashes in restricted environments.
+### Observability
+- **Structured metrics** (`app/observability.py`): Thread-safe in-process metrics for LLM latency, retrieval latency, request latency, failures, retries, regeneration counts, token usage.
+- **`/metrics` endpoint**: Returns current metrics snapshot without exposing secrets or user content.
+- **Correlation IDs**: Every request gets a unique `X-Request-ID` header.
 
 ---
 
-## 6. Asynchronous Task Processing & Failure Handling
+## Limitations
 
- Celery tasks are defined in `app/tasks.py`:
+This project is **not production-ready**. Key limitations:
 
-- `extract_memory_async`: Performs async C++ text feature extraction and inserts memories into PostgreSQL and MongoDB.
-- `consolidate_memory`: Consolidates user memory history into shared relationship summaries.
-- `evaluate_response_async`: Asynchronously evaluates model response candidates against character fidelity metrics.
-- `export_training_data`: Batch SFT/DPO dataset generation job.
-
-### Failure Handling & Retries:
-- **Exponential Backoff:** Tasks use `autoretry_for=(Exception,)`, `retry_backoff=True`, and `max_retries=3`.
-- **Late Acknowledgements:** Tasks set `task_acks_late=True` and `task_reject_on_worker_lost=True` so messages are re-queued if a Celery worker dies unexpectedly.
-- **Audit Logging:** Every task execution (SUCCESS/FAILURE, duration_s, exception details) is written to MongoDB `async_job_logs`.
+1. **No learned embeddings**: Memory retrieval uses TF-IDF, not sentence-transformers or API embeddings. The interface is designed for drop-in replacement.
+2. **No trained reward model**: Response evaluation uses heuristics + LLM self-critique, not a trained preference model.
+3. **EQ classifier is sklearn, not a transformer**: The emotion/intent classifier uses TF-IDF features with sklearn heads, not a fine-tuned DeBERTa/ModernBERT. This is explicitly noted in the code.
+4. **Evaluation data is synthetic**: Test sets are hand-built with templated data, not independently validated on real user data.
+5. **No horizontal scaling**: The metrics collector is in-process. Production would need Prometheus/Datadog/CloudWatch.
+6. **Authentication is basic**: Optional Bearer token auth, not OAuth/OIDC/JWT.
+7. **Training scripts require GPU**: SFT/DPO training scripts in `training/` require torch + GPU, which is not available in all environments.
 
 ---
 
-## 7. Local Setup & Docker Instructions
+## Local Setup
 
 ### Prerequisites
-- Docker & Docker Compose
-- (Optional for standalone dev) Python 3.12+, GCC/g++ (with C++17 support)
+- Python 3.12+
+- (Optional) Docker & Docker Compose for full stack
 
-### Option A: Running the Full Stack with Docker Compose (Recommended)
+### Quick Start
+```bash
+pip install -r requirements.txt
+python -m pytest -v                    # Run all tests
+uvicorn main:app --reload --port 8000  # Start server
+```
 
-Start all 7 services (FastAPI, Celery worker, Celery beat, PostgreSQL, MongoDB, Redis, RabbitMQ):
-
+### Docker Compose (Full Stack)
 ```bash
 docker compose up --build
 ```
 
-#### Verification:
-- **FastAPI API:** http://localhost:8000
-- **Interactive OpenAPI Docs:** http://localhost:8000/docs
-- **RabbitMQ Management Dashboard:** http://localhost:15672 (User: `guest` / Pass: `guest`)
-- **Health Check:** `curl http://localhost:8000/health`
-- **Readiness Check:** `curl http://localhost:8000/ready`
+### Environment Variables
+See `.env.example` for all configuration options. Key new settings:
 
-### Option B: Local Development without Docker
-
-```bash
-# 1. Install dependencies
-pip install -r requirements.txt
-
-# 2. Compile C++ component (Win/Linux)
-g++ -std=c++17 -Icpp/include cpp/src/analyzer.cpp cpp/src/main.cpp -o cpp/persona_cpp_analyzer
-
-# 3. Run Pytest suite
-python -m pytest
-
-# 4. Start FastAPI server
-uvicorn main:app --reload --port 8000
-```
+| Variable | Default | Description |
+|---|---|---|
+| `LLM_TIMEOUT_S` | `30` | Per-provider LLM timeout in seconds |
+| `LLM_MAX_RETRIES` | `3` | Max retry attempts per provider |
+| `PERSONA_API_KEY` | (none) | Set to enable Bearer token authentication |
+| `EMBEDDING_BACKEND` | `tfidf` | Memory embedding backend |
 
 ---
 
-## 8. API Examples
-
-### 1. Synchronous Chat (`POST /chat`)
-```bash
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "u123",
-    "session_id": "s456",
-    "message": "I am feeling really happy and excited about my new project today!",
-    "show_debug": true
-  }'
-```
-
-### 2. Submit Async Memory Task (`POST /tasks/memory-extraction`)
-```bash
-curl -X POST http://localhost:8000/tasks/memory-extraction \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "u123",
-    "message": "I love building scalable backend architectures in Python and C++."
-  }'
-```
-
-### 3. Check Task Status (`GET /tasks/{task_id}`)
-```bash
-curl http://localhost:8000/tasks/<task_id_here>
-```
-
-### 4. Readiness Probe (`GET /ready`)
-```bash
-curl http://localhost:8000/ready
-```
-Returns service health status for PostgreSQL, MongoDB, Redis, RabbitMQ, and C++ component.
-
----
-
-## 9. AWS Deployment Readiness
-
-PersonaAI is architected for deployment to AWS infrastructure:
-- **Compute:** AWS ECS Fargate tasks running behind an Application Load Balancer (ALB).
-- **Relational DB:** Amazon RDS for PostgreSQL.
-- **Document DB:** Amazon DocumentDB (MongoDB-compatible).
-- **Message Broker:** Amazon MQ for RabbitMQ.
-- **Cache/Results:** Amazon ElastiCache for Redis.
-
-Detailed step-by-step deployment instructions, IAM security policies, and environment variable mappings are documented in [`docs/AWS_DEPLOYMENT.md`](docs/AWS_DEPLOYMENT.md).
-
----
-
-## 10. Testing Strategy
-
-The repository includes a comprehensive 27-test suite covering unit, integration, and E2E scenarios:
+## Testing
 
 ```bash
+# All tests (existing + new integration tests)
 python -m pytest -v
+
+# Integration tests only
+python -m pytest tests/test_integration.py -v
+
+# Extended evaluation harness
+python ml/evaluation/eval_extended.py
 ```
 
-### Test Coverage:
-- `tests/test_pipeline.py`: Persona orchestrator, state persistence, memory retrieval, scene state.
-- `tests/test_ml_and_export.py`: Scikit-learn EQ model training, save/load, dataset export.
-- `tests/test_cpp_analyzer.py`: C++ text analyzer execution, metric calculation, Python fallback.
-- `tests/test_mongo.py`: MongoDB repository insertion, querying, and offline fallback behavior.
-- `tests/test_tasks.py`: Celery background task execution in eager test mode.
-- `tests/test_health_ready.py`: FastAPI `/health` and `/ready` endpoint verification.
-- `tests/test_api_v2.py`: FastAPI `/chat` and `/tasks/*` async workflow routes.
+### Test Coverage
+- `tests/test_pipeline.py`: Orchestrator, state persistence, memory retrieval, scene state
+- `tests/test_integration.py`: **NEW** — 30+ integration tests covering:
+  - End-to-end API → retrieval → LLM flow
+  - Malformed LLM output handling
+  - Provider failure and fallback
+  - Retry behavior
+  - Cross-user isolation (security)
+  - Persistence
+  - Retrieval failure handling
+  - Background task execution
+  - Structured output validation
+  - Observability metrics
+- `tests/test_ml_and_export.py`: EQ model training, save/load, dataset export
+- `tests/test_tasks.py`: Celery background tasks
+- `tests/test_api_v2.py`: FastAPI endpoints
+- `tests/test_health_ready.py`: Health/readiness probes
+- `tests/test_cpp_analyzer.py`: C++ analyzer and fallback
+- `tests/test_mongo.py`: MongoDB repository and fallback
 
 ---
 
-## 11. Summary of Genuinely Implemented Technologies
+## API Endpoints
 
-The following technologies are actively integrated, runnable, and testable in this repository:
-
-1. **Python 3.12+ & FastAPI:** Async web engine with Pydantic validation, custom middleware, and OpenAPI documentation.
-2. **PostgreSQL:** SQLAlchemy Core relational persistence for user profiles, turn histories, and memory items.
-3. **MongoDB:** PyMongo document store for interaction telemetry events, Celery job logs, and evaluation records.
-4. **RabbitMQ:** Task queue message broker for Celery asynchronous processing.
-5. **Redis:** Fast key-value cache and Celery task result backend.
-6. **Celery:** Asynchronous job execution framework with exponential backoff retries and crontab scheduled beat tasks.
-7. **C++17:** Native C++ text analytics engine compiled with CMake/g++, integrated via Python subprocess interface with pure-Python fallback.
-8. **Docker & Docker Compose:** Multi-container stack featuring health checks, persistent volume mounts, and non-root runtime security.
-9. **AWS Readiness:** Prepared infrastructure configurations and step-by-step guide for Amazon ECS, RDS, DocumentDB, ElastiCache, and Amazon MQ.
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/chat` | Synchronous chat with debug info |
+| `GET` | `/character` | Active character metadata |
+| `GET` | `/user/{user_id}/state` | User model and relationship state |
+| `GET` | `/user/{user_id}/memories` | User's long-term memories |
+| `DELETE` | `/user/{user_id}/memories/{id}` | Delete a specific memory |
+| `POST` | `/user/{user_id}/profile/import` | Ingest profile text |
+| `GET` | `/user/{user_id}/style` | Communication style analysis |
+| `GET` | `/user/{user_id}/history` | Conversation history |
+| `POST` | `/tasks/memory-extraction` | Async memory extraction |
+| `POST` | `/tasks/evaluate` | Async response evaluation |
+| `GET` | `/tasks/{task_id}` | Task status |
+| `GET` | `/metrics` | **NEW** — Observability metrics |
+| `GET` | `/health` | Liveness probe |
+| `GET` | `/ready` | Readiness probe |

@@ -6,11 +6,13 @@ this actual codebase rather than a hypothetical one.
 
 Run from ml/: python3 evaluation/run_all_evaluations.py
 """
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 EVAL_DIR = Path(__file__).resolve().parent
+REPO_ROOT = EVAL_DIR.parent.parent
 MODELS_DIR = EVAL_DIR.parent / "models"
 CONSOLIDATED_OUT = MODELS_DIR / "EVALUATION_SUMMARY.md"
 
@@ -21,26 +23,30 @@ SCRIPTS = [
     ("Strategy selection (accuracy)", "eval_strategy_selection.py", "strategy_selection_eval.txt"),
     ("Style vector (discrimination + similarity sanity)", "eval_style_vector.py", "style_vector_eval.txt"),
     ("Personality drift detection (true/false positive cases)", "eval_drift.py", "drift_eval.txt"),
+    ("Extended: retrieval relevance, grounding, hallucination, regressions", "eval_extended.py", "extended_eval.txt"),
 ]
 
 
 def main():
-    print("Running full evaluation harness...\n")
+    print("Running full evaluation harness...\n", flush=True)
     sections = []
 
     for title, script, report_file in SCRIPTS:
-        print(f"=== {title} ===")
+        print(f"=== {title} ===", flush=True)
         result = subprocess.run(
             [sys.executable, str(EVAL_DIR / script)],
             cwd=str(EVAL_DIR.parent), capture_output=True, text=True,
         )
-        print(result.stdout)
+        print(result.stdout, flush=True)
         if result.returncode != 0:
-            print(f"FAILED: {result.stderr}", file=sys.stderr)
+            print(f"FAILED: {result.stderr}", file=sys.stderr, flush=True)
             sections.append((title, f"**FAILED TO RUN**\n\n```\n{result.stderr}\n```"))
             continue
-        report_path = MODELS_DIR / report_file
-        content = report_path.read_text() if report_path.exists() else "(no report file produced)"
+        if report_file:
+            report_path = MODELS_DIR / report_file
+            content = report_path.read_text() if report_path.exists() else "(no report file produced)"
+        else:
+            content = result.stdout or "(no output produced)"
         sections.append((title, content))
 
     with open(CONSOLIDATED_OUT, "w") as f:

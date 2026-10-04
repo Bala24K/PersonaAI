@@ -7,24 +7,35 @@ Pipeline (matches the "Normal conversation" flow in Section 12):
 Every generation attempt (not just the accepted one) is logged to the `candidates`
 table, so training/export_dataset.py can build real chosen-vs-rejected DPO pairs from
 actual system behavior rather than synthetic labels.
+
+Production hardening:
+- Observability: request metrics, regeneration tracking
+- Graceful failure handling: LLM/retrieval failures don't corrupt state
+- Prompt version tracking in candidates table
 """
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 
 from app.character import Character
 from app.config import settings
 from app.db import DB
-from app.dialogue_planner import build_system_prompt
+from app.dialogue_planner import build_system_prompt, get_prompt_versions
 from app.eq_estimator import EQState
 from app.eq_estimator_trained import build_eq_estimator
 from app.evaluator import EvalResult, ResponseEvaluator
 from app.llm_client import LLMClient, build_llm_client
 from app.memory import MemoryStore
+from app.observability import (
+    RequestMetrics, log_regeneration, metrics as obs_metrics, timed,
+)
 from app.scene_state import SceneStateStore
 from app.user_state import UserStateStore
+
+logger = logging.getLogger("persona_ai.orchestrator")
 
 
 @dataclass
@@ -33,6 +44,7 @@ class TurnResult:
     eq_state: EQState
     eval_result: EvalResult
     regenerations: int
+    prompt_versions: dict | None = None
 
 
 class Persona:
@@ -120,6 +132,9 @@ class Persona:
             )
 
     def respond(self, user_id: str, session_id: str, message: str) -> TurnResult:
+        obs_metrics.increment("requests_total")
+        request_start = time.perf_counter()
+
         self.db.ensure_user(user_id)
 
         # 1. Load prior state
@@ -130,10 +145,12 @@ class Persona:
         scene = self.scene_state.load(user_id)
 
         # 2. EQ Transformer: S_t = f(C_t, S_{t-1})
-        eq_state = self.eq_estimator.update(recent, message, prev_eq)
+        with timed("eq_estimation_ms"):
+            eq_state = self.eq_estimator.update(recent, message, prev_eq)
 
-        # 3. Memory retrieval
-        memories = self.memory.retrieve(user_id, message, k=settings.max_memories_retrieved)
+        # 3. Memory retrieval (user-isolated, configurable top-k)
+        with timed("memory_retrieval_ms"):
+            memories = self.memory.retrieve(user_id, message, k=settings.max_memories_retrieved)
 
         # 4. Generate -> Evaluate -> Regenerate loop (every attempt logged for DPO data)
         recent_assistant = self._recent_assistant_texts(user_id)
@@ -148,8 +165,29 @@ class Persona:
                 self.character, user_profile, relationship, eq_state, memories, scene, feedback
             )
             messages = recent + [{"role": "user", "content": message}]
-            candidate = self.llm.complete(system, messages)
-            eval_result = self.evaluator.evaluate(self.character, eq_state, recent_assistant, candidate)
+
+            try:
+                with timed("llm_generation_ms"):
+                    candidate = self.llm.complete(system, messages)
+            except Exception as exc:
+                logger.error("LLM generation failed on attempt %d: %s", attempt + 1, exc)
+                obs_metrics.increment("llm_generation_failures")
+                # Use empty response rather than corrupting state
+                candidate = ""
+                break
+
+            try:
+                with timed("evaluation_ms"):
+                    eval_result = self.evaluator.evaluate(self.character, eq_state, recent_assistant, candidate)
+            except Exception as exc:
+                logger.error("Evaluation failed on attempt %d: %s", attempt + 1, exc)
+                # Accept the candidate without evaluation rather than losing it
+                eval_result = EvalResult(
+                    emotional_fit=0.5, persona_consistency=0.5, context_relevance=0.5,
+                    memory_consistency=0.9, repetition=0.3,
+                )
+                break
+
             accepted = eval_result.overall >= settings.min_acceptable_score
 
             self._store_candidate(user_id, session_id, message, system, candidate, eval_result, accepted)
@@ -157,6 +195,17 @@ class Persona:
             if accepted:
                 break
             feedback = self._feedback_from_eval(eval_result)
+
+        # Track regenerations
+        regenerations = attempts - 1
+        log_regeneration(regenerations)
+
+        # Default eval_result if none was produced
+        if eval_result is None:
+            eval_result = EvalResult(
+                emotional_fit=0.5, persona_consistency=0.5, context_relevance=0.5,
+                memory_consistency=0.9, repetition=0.3,
+            )
 
         # 5. Persist turn + update state
         self._store_turn(user_id, session_id, "user", message, eq_state=eq_state)
@@ -176,7 +225,17 @@ class Persona:
                 importance=min(eq_state.intensity, 0.9),
             )
 
-        return TurnResult(response=candidate, eq_state=eq_state, eval_result=eval_result, regenerations=attempts - 1)
+        # Record total request latency
+        total_ms = (time.perf_counter() - request_start) * 1000
+        obs_metrics.record_latency("request_total_ms", total_ms)
+
+        return TurnResult(
+            response=candidate,
+            eq_state=eq_state,
+            eval_result=eval_result,
+            regenerations=regenerations,
+            prompt_versions=get_prompt_versions(),
+        )
 
     def _latest_eq_state(self, user_id: str) -> dict | None:
         with self.db.connect() as conn:

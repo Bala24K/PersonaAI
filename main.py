@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import socket
 import time
 import uuid
@@ -16,6 +17,7 @@ from app.character import Character
 from app.config import settings
 from app.cpp_wrapper import analyze_text_cpp
 from app.mongo_store import mongo_store
+from app.observability import metrics as obs_metrics
 from app.orchestrator import Persona
 
 # Configure structured logging
@@ -38,9 +40,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Correlation ID Middleware
+# Optional API key authentication (set PERSONA_API_KEY env var to enable)
+_API_KEY = os.getenv("PERSONA_API_KEY")
+
 @app.middleware("http")
-async def add_correlation_id_middleware(request: Request, call_next):
+async def auth_and_correlation_middleware(request: Request, call_next):
+    # Skip auth for health/ready/docs endpoints
+    skip_paths = {"/health", "/ready", "/docs", "/openapi.json", "/redoc"}
+    if _API_KEY and request.url.path not in skip_paths and not request.url.path.startswith("/ui"):
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer ") or auth_header[7:] != _API_KEY:
+            import json as _json
+            return Response(
+                content=_json.dumps({"detail": "Invalid or missing API key"}),
+                status_code=401,
+                media_type="application/json",
+            )
+
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     request.state.request_id = request_id
     start_time = time.time()
@@ -120,6 +136,7 @@ def chat(req: ChatRequest, request: Request):
             "eq_state": result.eq_state.to_dict(),
             "eval_result": result.eval_result.to_dict(),
             "regenerations": result.regenerations,
+            "prompt_versions": result.prompt_versions,
         }
 
     # Log interaction event trace to MongoDB
@@ -476,6 +493,14 @@ def get_task_status(task_id: str):
         "mongo_trace": mongo_job_log,
     }
 
+
+
+# --- Observability ---
+
+@app.get("/metrics")
+def get_metrics():
+    """Returns current observability metrics snapshot. Does not expose secrets or user content."""
+    return obs_metrics.snapshot()
 
 
 # --- Health & Readiness Checks ---

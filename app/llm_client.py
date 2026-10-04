@@ -1,6 +1,14 @@
 """Main LLM Generator (Section 9 of pitch doc), pluggable and multi-provider resilient so
 the system gracefully falls back across providers (OpenRouter, Groq, Cohere, Gemini, Anthropic)
 down to the deterministic mock responder if external services encounter outages or rate limits.
+
+Production hardening:
+- Configurable timeout per provider
+- Bounded retry with exponential backoff
+- Provider fallback chain
+- Structured output validation via Pydantic schemas
+- Observability metrics for every call
+- Failures degrade gracefully — never corrupt persistent state
 """
 from __future__ import annotations
 
@@ -12,10 +20,18 @@ import time
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
+from typing import Any, Dict, Optional
 
 from app.config import settings
+from app.observability import LLMCallMetrics, log_llm_call, log_validation_failure
+from app.schemas import EQStateSchema, EvalResultSchema, ValidationError
 
 logger = logging.getLogger("persona_ai.llm")
+
+# Default timeout and retry settings
+DEFAULT_TIMEOUT_S = 30
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_BACKOFF_BASE = 1.5
 
 
 class LLMClient(ABC):
@@ -30,13 +46,80 @@ class LLMClient(ABC):
         raw = self.complete(full_system, [{"role": "user", "content": user_prompt}], max_tokens)
         return _extract_json(raw)
 
+    def complete_json_validated(
+        self,
+        system: str,
+        user_prompt: str,
+        schema_name: str,
+        max_tokens: int = 500,
+        max_retries: int = 2,
+    ) -> dict:
+        """Ask for structured JSON and validate against a Pydantic schema.
+
+        Retries up to max_retries times if output fails validation.
+        Falls back to schema defaults if all attempts fail.
+        """
+        from app.schemas import validate_eq_state, validate_eval_result
+
+        validators = {
+            "EQStateSchema": validate_eq_state,
+            "EvalResultSchema": validate_eval_result,
+        }
+        validator = validators.get(schema_name)
+        if not validator:
+            # No validator registered — fall back to raw JSON extraction
+            return self.complete_json(system, user_prompt, max_tokens)
+
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                raw = self.complete_json(system, user_prompt, max_tokens)
+                validated = validator(raw)
+                return validated.model_dump()
+            except ValidationError as exc:
+                last_error = exc
+                log_validation_failure(schema_name)
+                logger.warning(
+                    "Structured output validation failed (attempt %d/%d) schema=%s: %s",
+                    attempt + 1, max_retries + 1, schema_name, exc,
+                )
+                if attempt < max_retries:
+                    # Add validation feedback to the prompt for retry
+                    user_prompt = (
+                        user_prompt
+                        + f"\n\n[VALIDATION ERROR: your previous response failed schema validation: {exc}. "
+                        f"Please output valid JSON matching the required schema exactly.]"
+                    )
+                continue
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "JSON extraction failed (attempt %d/%d): %s",
+                    attempt + 1, max_retries + 1, exc,
+                )
+                continue
+
+        # All attempts failed — return schema defaults rather than corrupting state
+        logger.error(
+            "All %d validation attempts failed for %s, returning schema defaults. Last error: %s",
+            max_retries + 1, schema_name, last_error,
+        )
+        if schema_name == "EQStateSchema":
+            return EQStateSchema().model_dump()
+        elif schema_name == "EvalResultSchema":
+            return EvalResultSchema().model_dump()
+        return {}
+
 
 class OpenRouterLLMClient(LLMClient):
     """Calls OpenRouter chat completions API (OpenAI-compatible)."""
 
-    def __init__(self, api_key: str, model: str = "meta-llama/llama-3.3-70b-instruct"):
+    def __init__(self, api_key: str, model: str = "meta-llama/llama-3.3-70b-instruct",
+                 timeout: float = DEFAULT_TIMEOUT_S, max_retries: int = DEFAULT_MAX_RETRIES):
         self._api_key = api_key
         self._model = model
+        self._timeout = timeout
+        self._max_retries = max_retries
 
     def complete(self, system: str, messages: list[dict], max_tokens: int = 600) -> str:
         url = "https://openrouter.ai/api/v1/chat/completions"
@@ -51,28 +134,70 @@ class OpenRouterLLMClient(LLMClient):
             "temperature": 0.7,
         }
         req_data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=req_data,
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://persona-ai.local",
-                "X-Title": "PersonaAI",
-            },
-        )
 
-        with urllib.request.urlopen(req, timeout=25) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return data["choices"][0]["message"]["content"].strip()
+        call_metrics = LLMCallMetrics(provider="OpenRouter", model=self._model)
+        start = time.perf_counter()
+
+        for attempt in range(self._max_retries):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=req_data,
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://persona-ai.local",
+                        "X-Title": "PersonaAI",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    result = data["choices"][0]["message"]["content"].strip()
+                    # Extract token usage if available
+                    usage = data.get("usage", {})
+                    call_metrics.tokens_prompt = usage.get("prompt_tokens", 0)
+                    call_metrics.tokens_completion = usage.get("completion_tokens", 0)
+                    call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+                    call_metrics.retries = attempt
+                    log_llm_call(call_metrics)
+                    return result
+            except urllib.error.HTTPError as err:
+                if err.code in (429, 500, 502, 503, 504) and attempt < self._max_retries - 1:
+                    call_metrics.retries = attempt + 1
+                    time.sleep(DEFAULT_RETRY_BACKOFF_BASE * (attempt + 1))
+                    continue
+                call_metrics.success = False
+                call_metrics.error_type = f"HTTP_{err.code}"
+                call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+                log_llm_call(call_metrics)
+                raise
+            except Exception as exc:
+                if attempt < self._max_retries - 1:
+                    call_metrics.retries = attempt + 1
+                    time.sleep(DEFAULT_RETRY_BACKOFF_BASE * (attempt + 1))
+                    continue
+                call_metrics.success = False
+                call_metrics.error_type = type(exc).__name__
+                call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+                log_llm_call(call_metrics)
+                raise
+
+        call_metrics.success = False
+        call_metrics.error_type = "max_retries_exceeded"
+        call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+        log_llm_call(call_metrics)
+        raise RuntimeError("OpenRouter: max retries exceeded")
 
 
 class GroqLLMClient(LLMClient):
     """Calls Groq Cloud API (OpenAI-compatible, ultra low-latency)."""
 
-    def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile"):
+    def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile",
+                 timeout: float = DEFAULT_TIMEOUT_S, max_retries: int = DEFAULT_MAX_RETRIES):
         self._api_key = api_key
         self._model = model
+        self._timeout = timeout
+        self._max_retries = max_retries
 
     def complete(self, system: str, messages: list[dict], max_tokens: int = 600) -> str:
         url = "https://api.groq.com/openai/v1/chat/completions"
@@ -87,26 +212,67 @@ class GroqLLMClient(LLMClient):
             "temperature": 0.7,
         }
         req_data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=req_data,
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-            },
-        )
 
-        with urllib.request.urlopen(req, timeout=25) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return data["choices"][0]["message"]["content"].strip()
+        call_metrics = LLMCallMetrics(provider="Groq", model=self._model)
+        start = time.perf_counter()
+
+        for attempt in range(self._max_retries):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=req_data,
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    result = data["choices"][0]["message"]["content"].strip()
+                    usage = data.get("usage", {})
+                    call_metrics.tokens_prompt = usage.get("prompt_tokens", 0)
+                    call_metrics.tokens_completion = usage.get("completion_tokens", 0)
+                    call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+                    call_metrics.retries = attempt
+                    log_llm_call(call_metrics)
+                    return result
+            except urllib.error.HTTPError as err:
+                if err.code in (429, 500, 502, 503, 504) and attempt < self._max_retries - 1:
+                    call_metrics.retries = attempt + 1
+                    time.sleep(DEFAULT_RETRY_BACKOFF_BASE * (attempt + 1))
+                    continue
+                call_metrics.success = False
+                call_metrics.error_type = f"HTTP_{err.code}"
+                call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+                log_llm_call(call_metrics)
+                raise
+            except Exception as exc:
+                if attempt < self._max_retries - 1:
+                    call_metrics.retries = attempt + 1
+                    time.sleep(DEFAULT_RETRY_BACKOFF_BASE * (attempt + 1))
+                    continue
+                call_metrics.success = False
+                call_metrics.error_type = type(exc).__name__
+                call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+                log_llm_call(call_metrics)
+                raise
+
+        call_metrics.success = False
+        call_metrics.error_type = "max_retries_exceeded"
+        call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+        log_llm_call(call_metrics)
+        raise RuntimeError("Groq: max retries exceeded")
 
 
 class CohereLLMClient(LLMClient):
     """Calls Cohere v2 Chat API."""
 
-    def __init__(self, api_key: str, model: str = "command-r-plus"):
+    def __init__(self, api_key: str, model: str = "command-r-plus",
+                 timeout: float = DEFAULT_TIMEOUT_S, max_retries: int = DEFAULT_MAX_RETRIES):
         self._api_key = api_key
         self._model = model
+        self._timeout = timeout
+        self._max_retries = max_retries
 
     def complete(self, system: str, messages: list[dict], max_tokens: int = 600) -> str:
         url = "https://api.cohere.com/v2/chat"
@@ -122,26 +288,64 @@ class CohereLLMClient(LLMClient):
             "temperature": 0.7,
         }
         req_data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=req_data,
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-            },
-        )
 
-        with urllib.request.urlopen(req, timeout=25) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return data["message"]["content"][0]["text"].strip()
+        call_metrics = LLMCallMetrics(provider="Cohere", model=self._model)
+        start = time.perf_counter()
+
+        for attempt in range(self._max_retries):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=req_data,
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    result = data["message"]["content"][0]["text"].strip()
+                    call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+                    call_metrics.retries = attempt
+                    log_llm_call(call_metrics)
+                    return result
+            except urllib.error.HTTPError as err:
+                if err.code in (429, 500, 502, 503, 504) and attempt < self._max_retries - 1:
+                    call_metrics.retries = attempt + 1
+                    time.sleep(DEFAULT_RETRY_BACKOFF_BASE * (attempt + 1))
+                    continue
+                call_metrics.success = False
+                call_metrics.error_type = f"HTTP_{err.code}"
+                call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+                log_llm_call(call_metrics)
+                raise
+            except Exception as exc:
+                if attempt < self._max_retries - 1:
+                    call_metrics.retries = attempt + 1
+                    time.sleep(DEFAULT_RETRY_BACKOFF_BASE * (attempt + 1))
+                    continue
+                call_metrics.success = False
+                call_metrics.error_type = type(exc).__name__
+                call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+                log_llm_call(call_metrics)
+                raise
+
+        call_metrics.success = False
+        call_metrics.error_type = "max_retries_exceeded"
+        call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+        log_llm_call(call_metrics)
+        raise RuntimeError("Cohere: max retries exceeded")
 
 
 class GeminiLLMClient(LLMClient):
     """Calls Google Gemini REST API using standard urllib with exponential retries."""
 
-    def __init__(self, api_key: str, model: str = "gemini-1.5-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-1.5-flash",
+                 timeout: float = DEFAULT_TIMEOUT_S, max_retries: int = DEFAULT_MAX_RETRIES):
         self._api_key = api_key
         self._model = model
+        self._timeout = timeout
+        self._max_retries = max_retries
 
     def complete(self, system: str, messages: list[dict], max_tokens: int = 600) -> str:
         gemini_contents = []
@@ -167,52 +371,102 @@ class GeminiLLMClient(LLMClient):
             if fallback not in candidate_models:
                 candidate_models.append(fallback)
 
+        call_metrics = LLMCallMetrics(provider="Gemini", model=self._model)
+        start = time.perf_counter()
+
         for current_model in candidate_models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={self._api_key}"
             req = urllib.request.Request(url, data=req_data, headers={"Content-Type": "application/json"})
 
-            max_retries = 3
-            for attempt in range(max_retries):
+            for attempt in range(self._max_retries):
                 try:
-                    with urllib.request.urlopen(req, timeout=25) as resp:
+                    with urllib.request.urlopen(req, timeout=self._timeout) as resp:
                         data = json.loads(resp.read().decode("utf-8"))
                         candidates = data.get("candidates", [])
                         if candidates and "content" in candidates[0]:
                             parts = candidates[0]["content"].get("parts", [])
                             text_blocks = [p.get("text", "") for p in parts if "text" in p]
-                            return "\n".join(text_blocks).strip()
+                            result = "\n".join(text_blocks).strip()
+                            # Extract token usage if available
+                            usage = data.get("usageMetadata", {})
+                            call_metrics.tokens_prompt = usage.get("promptTokenCount", 0)
+                            call_metrics.tokens_completion = usage.get("candidatesTokenCount", 0)
+                            call_metrics.model = current_model
+                            call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+                            call_metrics.retries = attempt
+                            if current_model != self._model:
+                                call_metrics.is_fallback = True
+                            log_llm_call(call_metrics)
+                            return result
                         return ""
                 except urllib.error.HTTPError as err:
                     if err.code == 404:
                         break
-                    if err.code in (429, 500, 502, 503, 504) and attempt < max_retries - 1:
-                        time.sleep(1.5 * (attempt + 1))
+                    if err.code in (429, 500, 502, 503, 504) and attempt < self._max_retries - 1:
+                        time.sleep(DEFAULT_RETRY_BACKOFF_BASE * (attempt + 1))
                         continue
+                    call_metrics.success = False
+                    call_metrics.error_type = f"HTTP_{err.code}"
+                    call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+                    log_llm_call(call_metrics)
                     raise
                 except Exception:
-                    if attempt < max_retries - 1:
-                        time.sleep(1.5 * (attempt + 1))
+                    if attempt < self._max_retries - 1:
+                        time.sleep(DEFAULT_RETRY_BACKOFF_BASE * (attempt + 1))
                         continue
                     raise
 
+        call_metrics.success = False
+        call_metrics.error_type = "all_models_exhausted"
+        call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+        log_llm_call(call_metrics)
         raise RuntimeError("All Gemini models exhausted")
 
 
 class AnthropicLLMClient(LLMClient):
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6"):
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6",
+                 timeout: float = DEFAULT_TIMEOUT_S, max_retries: int = DEFAULT_MAX_RETRIES):
         import anthropic
 
-        self._client = anthropic.Anthropic(api_key=api_key)
+        self._client = anthropic.Anthropic(api_key=api_key, timeout=timeout)
         self._model = model
+        self._max_retries = max_retries
 
     def complete(self, system: str, messages: list[dict], max_tokens: int = 600) -> str:
-        resp = self._client.messages.create(
-            model=self._model,
-            max_tokens=max_tokens,
-            system=system,
-            messages=messages,
-        )
-        return "".join(block.text for block in resp.content if block.type == "text")
+        call_metrics = LLMCallMetrics(provider="Anthropic", model=self._model)
+        start = time.perf_counter()
+
+        for attempt in range(self._max_retries):
+            try:
+                resp = self._client.messages.create(
+                    model=self._model,
+                    max_tokens=max_tokens,
+                    system=system,
+                    messages=messages,
+                )
+                result = "".join(block.text for block in resp.content if block.type == "text")
+                call_metrics.tokens_prompt = getattr(resp.usage, "input_tokens", 0)
+                call_metrics.tokens_completion = getattr(resp.usage, "output_tokens", 0)
+                call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+                call_metrics.retries = attempt
+                log_llm_call(call_metrics)
+                return result
+            except Exception as exc:
+                if attempt < self._max_retries - 1:
+                    call_metrics.retries = attempt + 1
+                    time.sleep(DEFAULT_RETRY_BACKOFF_BASE * (attempt + 1))
+                    continue
+                call_metrics.success = False
+                call_metrics.error_type = type(exc).__name__
+                call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+                log_llm_call(call_metrics)
+                raise
+
+        call_metrics.success = False
+        call_metrics.error_type = "max_retries_exceeded"
+        call_metrics.latency_ms = (time.perf_counter() - start) * 1000
+        log_llm_call(call_metrics)
+        raise RuntimeError("Anthropic: max retries exceeded")
 
 
 class MultiProviderFallbackLLMClient(LLMClient):
@@ -221,18 +475,37 @@ class MultiProviderFallbackLLMClient(LLMClient):
     def __init__(self, clients: list[tuple[str, LLMClient]]):
         self.clients = clients
         self.mock = MockLLMClient()
+        self._last_provider = ""
+        self._last_model = ""
+
+    @property
+    def last_provider(self) -> str:
+        return self._last_provider
+
+    @property
+    def last_model(self) -> str:
+        return self._last_model
 
     def complete(self, system: str, messages: list[dict], max_tokens: int = 600) -> str:
-        for provider_name, client in self.clients:
+        from app.observability import metrics as obs_metrics
+        for idx, (provider_name, client) in enumerate(self.clients):
             try:
                 res = client.complete(system, messages, max_tokens)
                 if res and res.strip():
+                    self._last_provider = provider_name
+                    self._last_model = getattr(client, "_model", "unknown")
+                    if idx > 0:
+                        # This was a fallback
+                        obs_metrics.increment("provider_fallback_used")
                     return res
             except Exception as exc:
                 logger.warning("Provider %s failed (%s). Cascading to next available provider...", provider_name, exc)
+                obs_metrics.increment(f"provider_{provider_name}_failures")
                 continue
 
         logger.warning("All configured LLM providers failed. Falling back to MockLLMClient.")
+        self._last_provider = "Mock"
+        self._last_model = "mock"
         return self.mock.complete(system, messages, max_tokens)
 
     def complete_json(self, system: str, user_prompt: str, max_tokens: int = 500) -> dict:
@@ -240,12 +513,35 @@ class MultiProviderFallbackLLMClient(LLMClient):
             try:
                 res = client.complete_json(system, user_prompt, max_tokens)
                 if res and isinstance(res, dict):
+                    self._last_provider = provider_name
+                    self._last_model = getattr(client, "_model", "unknown")
                     return res
             except Exception as exc:
                 logger.warning("Provider %s complete_json failed (%s). Cascading...", provider_name, exc)
                 continue
 
         return self.mock.complete_json(system, user_prompt, max_tokens)
+
+    def complete_json_validated(
+        self,
+        system: str,
+        user_prompt: str,
+        schema_name: str,
+        max_tokens: int = 500,
+        max_retries: int = 2,
+    ) -> dict:
+        for provider_name, client in self.clients:
+            try:
+                res = client.complete_json_validated(system, user_prompt, schema_name, max_tokens, max_retries)
+                if res and isinstance(res, dict):
+                    self._last_provider = provider_name
+                    self._last_model = getattr(client, "_model", "unknown")
+                    return res
+            except Exception as exc:
+                logger.warning("Provider %s complete_json_validated failed (%s). Cascading...", provider_name, exc)
+                continue
+
+        return self.mock.complete_json_validated(system, user_prompt, schema_name, max_tokens, max_retries)
 
 
 class MockLLMClient(LLMClient):

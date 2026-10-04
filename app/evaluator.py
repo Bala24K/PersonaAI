@@ -5,27 +5,27 @@ This version: cheap heuristics (repetition, length sanity, echo-detection) combi
 an LLM self-critique call for the harder-to-heuristic dimensions (emotional fit, persona
 consistency). Interface matches what a trained model would return, so it's a drop-in
 replacement point later.
+
+Production hardening:
+- All LLM scores validated through EvalResultSchema before use
+- Uses versioned prompt template
+- Observability: validation failures tracked
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 
 from app.character import Character
 from app.eq_estimator import EQState
 from app.llm_client import LLMClient
+from app.prompts import prompt_registry
 
-EVAL_SYSTEM_PROMPT = """You are a strict response-quality evaluator for a character-based
-conversational AI. Given the character definition, the user's emotional state, and a
-candidate response, score the response. Output ONLY JSON:
-{
-  "emotional_fit": <0-1, does the tone match what the user needs right now>,
-  "persona_consistency": <0-1, does this sound like the defined character>,
-  "context_relevance": <0-1, does it actually respond to what the user said>,
-  "memory_consistency": <0-1, does it avoid contradicting/inventing memories>,
-  "repetition": <0-1, HIGH score = repetitive/generic, LOW score = fresh>
-}
-Be genuinely critical — most responses should NOT get near-perfect scores."""
+logger = logging.getLogger("persona_ai.evaluator")
+
+# Use versioned prompt
+EVAL_SYSTEM_PROMPT = prompt_registry.get("eval_critic").system_instructions
 
 
 @dataclass
@@ -72,7 +72,11 @@ class ResponseEvaluator:
             f"USER EMOTIONAL STATE:\n{eq_state.to_dict()}\n"
             f"CANDIDATE RESPONSE:\n{candidate}\n"
         )
-        raw = self._llm.complete_json(EVAL_SYSTEM_PROMPT, prompt)
+
+        # Use validated JSON extraction — scores guaranteed to be valid floats in [0,1]
+        raw = self._llm.complete_json_validated(
+            EVAL_SYSTEM_PROMPT, prompt, schema_name="EvalResultSchema"
+        )
 
         # blend heuristic repetition with model-judged repetition (max = more conservative)
         repetition = max(float(raw.get("repetition", 0.3)), heuristic_repetition)

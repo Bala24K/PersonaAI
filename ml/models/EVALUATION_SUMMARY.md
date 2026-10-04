@@ -237,3 +237,106 @@ are the only shapes real users produce.
 
 ```
 
+## Extended: retrieval relevance, grounding, hallucination, regressions
+
+```
+============================================================
+Extended Evaluation Harness Report
+============================================================
+
+{
+  "total_evaluations": 7,
+  "passed": 7,
+  "failed": 0,
+  "pass_rate": 1.0,
+  "results": [
+    {
+      "test": "retrieval_relevance",
+      "precision_at_3": 0.667,
+      "relevant_in_top_3": 2,
+      "total_retrieved": 3,
+      "pass": true,
+      "evaluation_name": "Retrieval Relevance"
+    },
+    {
+      "test": "context_recall",
+      "recall_rate": 1.0,
+      "expected_recalled": 2,
+      "actually_recalled": 2,
+      "pass": true,
+      "evaluation_name": "Context Recall"
+    },
+    {
+      "test": "response_grounding",
+      "ungrounded_claims": 0,
+      "ungrounded_keywords": [],
+      "grounding_score": 1.0,
+      "pass": true,
+      "evaluation_name": "Response Grounding"
+    },
+    {
+      "test": "structured_output_validity",
+      "eq_validation_rate": 1.0,
+      "eval_validation_rate": 1.0,
+      "eq_tested": 4,
+      "eval_tested": 1,
+      "pass": true,
+      "evaluation_name": "Structured Output Validity"
+    },
+    {
+      "test": "hallucination_check",
+      "hallucination_phrases_found": 0,
+      "hallucination_score": 1.0,
+      "pass": true,
+      "evaluation_name": "Hallucination Check"
+    },
+    {
+      "test": "regressions",
+      "cases": [
+        {
+          "case": "basic_response",
+          "pass": true
+        },
+        {
+          "case": "long_message",
+          "pass": true
+        },
+        {
+          "case": "special_chars",
+          "pass": true
+        },
+        {
+          "case": "unicode",
+          "pass": true
+        }
+      ],
+      "passed": 4,
+      "total": 4,
+      "pass": true,
+      "evaluation_name": "Regression Tests"
+    },
+    {
+      "test": "latency_and_tokens",
+      "latencies_ms": [
+        7572.7,
+        8084.1,
+        16351.3
+      ],
+      "mean_latency_ms": 10669.4,
+      "metrics_snapshot_keys": [
+        "retrieval_calls_total",
+        "requests_total",
+        "llm_calls_total",
+        "tokens_prompt_total",
+        "tokens_completion_total",
+        "regenerations_total"
+      ],
+      "llm_calls_tracked": true,
+      "pass": true,
+      "evaluation_name": "Latency & Token Usage"
+    }
+  ]
+}
+
+```
+

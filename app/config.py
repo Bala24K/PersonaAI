@@ -69,5 +69,13 @@ class Settings:
     max_regeneration_attempts: int = int(os.getenv("MAX_REGENERATION_ATTEMPTS", "2"))
     min_acceptable_score: float = float(os.getenv("MIN_ACCEPTABLE_SCORE", "0.55"))
 
+    # LLM reliability settings
+    llm_timeout_s: float = float(os.getenv("LLM_TIMEOUT_S", "30"))
+    llm_max_retries: int = int(os.getenv("LLM_MAX_RETRIES", "3"))
+    llm_retry_backoff_base: float = float(os.getenv("LLM_RETRY_BACKOFF_BASE", "1.5"))
+
+    # Embedding backend: "tfidf" (default) or "sentence_transformers" (requires extra deps)
+    embedding_backend: str = os.getenv("EMBEDDING_BACKEND", "tfidf")
+
 
 settings = Settings()
